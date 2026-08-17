@@ -1,0 +1,32 @@
+# Fast local checks. `make verify` remains the authoritative gate.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: ^tests/fixtures/
+      - id: mixed-line-ending
+        args: [--fix=no]
+        exclude: ^tests/fixtures/
+      - id: trailing-whitespace
+        exclude: ^tests/fixtures/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: no-dashes
+        name: reject em dashes and en dashes
+        entry: python3 -c "import sys; bad=[f for f in sys.argv[1:] if any(d in open(f,encoding='utf-8',errors='ignore').read() for d in ('–','—'))]; sys.exit('em/en dash in: '+', '.join(bad)) if bad else None"
+        language: system
+        types: [text]
+        exclude: ^(uv\.lock|LICENSE)$

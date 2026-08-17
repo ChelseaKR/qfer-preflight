@@ -1,0 +1,91 @@
+name: Release
+
+# Publishing is split into two jobs on purpose. The job that can verify has no
+# write permission, and the job that can write never checks out repository
+# content. Neither can publish something the other did not approve.
+#
+# Before the first release, set the repository secret RELEASE_ALLOWED_SIGNERS
+# to the allowed-signers line for the key that signs release tags, in the
+# format that git's gpg.ssh.allowedSignersFile expects. Without it the
+# verification job fails closed and nothing is published.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Signed tag to publish, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tag:
+    name: Verify the tag is signed and reachable from main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out main with full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse to release from anything but main
+        run: |
+          set -euo pipefail
+          echo "workflow ref is ${GITHUB_REF}"
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      - name: Verify the tag object, its signature and its ancestry
+        env:
+          TAG: ${{ inputs.tag }}
+          ALLOWED_SIGNERS: ${{ secrets.RELEASE_ALLOWED_SIGNERS }}
+        run: |
+          set -euo pipefail
+          test -n "${ALLOWED_SIGNERS}"
+          git fetch --tags --force origin
+
+          # An annotated or signed tag is a tag object. A lightweight tag
+          # points straight at a commit and carries no signature.
+          test "$(git cat-file -t "${TAG}")" = "tag"
+
+          printf '%s\n' "${ALLOWED_SIGNERS}" > "${RUNNER_TEMP}/allowed_signers"
+          git config gpg.ssh.allowedSignersFile "${RUNNER_TEMP}/allowed_signers"
+          git verify-tag "${TAG}"
+
+          # The tag must already be on main, so a release can never ship code
+          # that did not go through the branch.
+          git merge-base --is-ancestor "${TAG}" origin/main
+
+  publish:
+    name: Publish the release
+    needs: verify-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Re-resolve the tag object after verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')"
+          test -n "${sha}"
+          echo "verified tag object resolves to ${sha}"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --notes-from-tag \
+            --verify-tag

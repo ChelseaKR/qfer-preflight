@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: qfer-preflight
+message: "If you use this work, please cite it."
+type: software
+authors:
+  - family-names: Kelly-Reif
+    given-names: Chelsea
+repository-code: "https://github.com/ChelseaKR/qfer-preflight"
+abstract: >-
+  A deterministic, offline pre-submission validator for California Energy
+  Commission QFER Consumption CSV filings. Every finding cites the published
+  document it was derived from, and anything the tool cannot evaluate is
+  reported as unvalidated rather than as a pass. Not affiliated with the
+  California Energy Commission.
+keywords:
+  - regulatory-reporting
+  - data-validation
+  - energy
+  - csv
+license: Apache-2.0

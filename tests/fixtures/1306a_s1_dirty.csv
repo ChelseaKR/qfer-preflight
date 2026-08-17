@@ -1,0 +1,4 @@
+CompanyNumber,Year,Month,CountyNumber,CustomerType,RateClass,NAICSCode,NumberofCustomers,SalesDeliveryAmount,Revenue
+,25,13,77,X,A1,12345,NULL,"1,234",$500
+101,2026,7,34,B,A1,RE9999,5,10,20
+

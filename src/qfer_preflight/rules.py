@@ -1,0 +1,422 @@
+"""The rule registry.
+
+Every rule in this file is derived from text published by the California
+Energy Commission, and carries a citation to the document it came from. The
+`quote` attached to a rule is transcribed from that document. The only
+normalisation applied to a quote is that typographic quotation marks are
+written as plain ASCII quotation marks. Wording, spelling and punctuation are
+otherwise left exactly as published, including in the few places where the
+published text contains an evident typo.
+
+Rule identifiers are permanent. QP001 will always mean what it means today.
+An identifier is never reassigned to a different check. If a rule is
+withdrawn, it keeps its identifier and is marked retired.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+
+from .model import Citation, Rule, Severity
+from .profiles import Profile
+
+# ---------------------------------------------------------------------------
+# Shared quotes, keyed by profile id where the published wording differs.
+# "*" supplies the wording used when a profile has no specific entry.
+# ---------------------------------------------------------------------------
+
+_EXTRA_INFO_QUOTE: Mapping[str, str] = {
+    "CEC-1306A-S1": (
+        "Exclude any extra information, including data for other fields, "
+        "miscellaneous calculations, blank rows, or totals."
+    ),
+    "CEC-1306A-S2": (
+        "Exclude any extra information, including data for other fields, "
+        "miscellaneous calculations, blank rows, or totals."
+    ),
+    "CEC-1308B-S1": (
+        "Exclude any extra information including data for other fields, "
+        "miscellaneous calculations, blank rows, or totals."
+    ),
+    "CEC-1306B": (
+        "Exclude any extra information, including extra headers, data for "
+        "other fields, miscellaneous calculations, blank rows, or totals."
+    ),
+    "CEC-1308C": (
+        "Exclude any extra information, including extra headers, data for "
+        "other fields, miscellaneous calculations, blank rows, or totals."
+    ),
+}
+
+_ZERO_PLACEHOLDER_QUOTE: Mapping[str, str] = {
+    "*": (
+        'For values of zero, please enter "0" instead of leaving the cell '
+        'blank or entering "NULL" or "-".'
+    ),
+    "CEC-1308B-S1": (
+        'For values of zero, please enter "0" instead of leaving the cell '
+        'blank or entering NULL or "-".'
+    ),
+}
+
+_NON_NUMERIC_QUOTE: Mapping[str, str] = {
+    "*": (
+        "Do not add any non-numeric characters, such as letters, spaces, "
+        "comma separator, dollar sign, etc."
+    ),
+    # The CEC-1306A instructions read "letter" rather than "letters".
+    "CEC-1306A-S1": (
+        "Do not add any non-numeric characters, such as letter, spaces, "
+        "comma separator, dollar sign, etc."
+    ),
+    "CEC-1308B-S1": (
+        "Do not add any non-numeric characters such as letters, spaces, "
+        "comma separator, dollar sign, etc."
+    ),
+}
+
+_WHEN_TO_FILE_QUOTE = (
+    "Submit monthly data for the previous quarter by the 15th of February, "
+    "May, August, and November."
+)
+
+_NAICS_QUOTE = (
+    "NAICS code shall describe the primary activity at the location where the "
+    "energy is consumed. NAICS code must be exactly 6-characters in length and "
+    'match the list of "Valid NAICS codes."'
+)
+
+
+def _resolve(source: str | Mapping[str, str] | None, profile_id: str) -> str | None:
+    if source is None or isinstance(source, str):
+        return source
+    if profile_id in source:
+        return source[profile_id]
+    return source.get("*")
+
+
+@dataclass(frozen=True, slots=True)
+class RuleSpec:
+    """A rule definition that is bound to a profile to produce a `Rule`."""
+
+    id: str
+    title: str
+    severity: Severity
+    locator: str | Mapping[str, str]
+    applies: Callable[[Profile], bool]
+    quote: str | Mapping[str, str] | None = None
+    implemented: bool = True
+    unimplemented_reason: str | None = None
+    # When true the citation points at the published CSV template rather than
+    # at the instructions PDF.
+    cite_template: bool = False
+    # Optional citation override for rules whose source is neither the
+    # instructions PDF nor the template.
+    citation_override: Citation | None = None
+    tags: tuple[str, ...] = field(default_factory=tuple)
+
+    def bind(self, profile: Profile) -> Rule:
+        locator = _resolve(self.locator, profile.id)
+        if locator is None:  # pragma: no cover
+            raise ValueError(f"rule {self.id} has no locator for {profile.id}")
+        if self.citation_override is not None:
+            citation = self.citation_override
+        elif self.cite_template:
+            citation = profile.template_citation(locator)
+        else:
+            citation = profile.citation(locator)
+        return Rule(
+            id=self.id,
+            title=self.title,
+            severity=self.severity,
+            citation=citation,
+            quote=_resolve(self.quote, profile.id),
+            implemented=self.implemented,
+            unimplemented_reason=self.unimplemented_reason,
+        )
+
+
+def _always(_: Profile) -> bool:
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Structural rules
+# ---------------------------------------------------------------------------
+
+RULE_SPECS: tuple[RuleSpec, ...] = (
+    RuleSpec(
+        id="QP001",
+        title="Input must be a non-empty file that parses as CSV",
+        severity=Severity.ERROR,
+        locator='"How to file", requirement to submit comma-separated values',
+        quote="The data must be submitted in a comma-separated values (CSV) format.",
+        applies=_always,
+        tags=("structural",),
+    ),
+    RuleSpec(
+        id="QP002",
+        title="Header row must match the published template exactly, in order",
+        severity=Severity.ERROR,
+        locator="header row of the published CSV template",
+        applies=_always,
+        cite_template=True,
+        tags=("structural",),
+    ),
+    RuleSpec(
+        id="QP003",
+        title="Every data row must have the same number of fields as the header",
+        severity=Severity.ERROR,
+        locator='"Important Template Notes" / "Notes: Each data submission shall"',
+        quote=_EXTRA_INFO_QUOTE,
+        applies=_always,
+        tags=("structural",),
+    ),
+    RuleSpec(
+        id="QP004",
+        title="Submission must not contain blank rows",
+        severity=Severity.ERROR,
+        locator='"Important Template Notes" / "Notes: Each data submission shall"',
+        quote=_EXTRA_INFO_QUOTE,
+        applies=_always,
+        tags=("structural",),
+    ),
+    RuleSpec(
+        id="QP005",
+        title="Submission must not contain totals or summary rows",
+        severity=Severity.ERROR,
+        locator='"Important Template Notes" / "Notes: Each data submission shall"',
+        quote=_EXTRA_INFO_QUOTE,
+        applies=_always,
+        implemented=False,
+        unimplemented_reason=(
+            "The instructions prohibit totals rows but publish no marker that "
+            "distinguishes a totals row from a data row. Any test would be a "
+            "heuristic guess, so this rule is registered and left unevaluated "
+            "rather than being approximated."
+        ),
+        tags=("structural",),
+    ),
+    RuleSpec(
+        id="QP006",
+        title="Submission must contain at least one data row",
+        severity=Severity.ERROR,
+        locator='"Purpose" and "When to file"',
+        quote=_WHEN_TO_FILE_QUOTE,
+        applies=_always,
+        tags=("structural",),
+    ),
+    # -----------------------------------------------------------------------
+    # Field rules
+    # -----------------------------------------------------------------------
+    RuleSpec(
+        id="QP010",
+        title="Year must be a four-digit calendar year",
+        severity=Severity.ERROR,
+        locator='field definition "Year"',
+        quote="Use four-digit year (e.g., 2025).",
+        applies=lambda p: p.year_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP011",
+        title="Month must be a whole number from 1 to 12",
+        severity=Severity.ERROR,
+        locator='field definition "Month Number"',
+        quote="Numeric month (i.e., 1, 2, 3, ..., 12).",
+        applies=lambda p: p.month_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP012",
+        title="Quarter Number must be 1, 2, 3 or 4",
+        severity=Severity.ERROR,
+        locator='Schedule 2 field definition "Quarter Number"',
+        quote="Calendar year quarter (i.e., 1, 2, 3, or 4).",
+        applies=lambda p: p.quarter_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP013",
+        title="County Number must appear in the published county table",
+        severity=Severity.ERROR,
+        locator=(
+            'field definition "County Number" and the table "County Numbers '
+            'and Corresponding Names (for California)"'
+        ),
+        quote=(
+            "Provide the county number where the end-use customer consumed the "
+            "reported energy. A table of county numbers and their corresponding "
+            "county names is provided at the end of this document."
+        ),
+        applies=lambda p: p.county_column is not None,
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP014",
+        title="Customer Type must be D, B or C",
+        severity=Severity.ERROR,
+        locator='Schedule 1 field definition "Customer Type"',
+        quote=(
+            "D = Direct Access Customer, B = Bundled Customer, C = Community Choice Aggregation."
+        ),
+        applies=lambda p: p.customer_type_column is not None,
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP015",
+        title="Customer Group must match a published value, spelled and capitalised exactly",
+        severity=Severity.ERROR,
+        locator='field definition "Customer Group"',
+        quote=(
+            "IMPORTANT: The Customer Group value must be entered exactly as "
+            "spelled and capitalized above."
+        ),
+        applies=lambda p: p.customer_group_column is not None,
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP016",
+        title="Rate Code must appear in the published gas rate code table",
+        severity=Severity.ERROR,
+        locator='Schedule 1 field definition "Rate Code"',
+        quote=("Use the following rate codes to describe the type of gas delivery."),
+        applies=lambda p: p.rate_code_column is not None,
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP017",
+        title="NAICS Code must be exactly six characters long",
+        severity=Severity.ERROR,
+        locator='field definition "NAICS Code"',
+        quote=_NAICS_QUOTE,
+        applies=lambda p: p.naics_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP018",
+        title='NAICS Code must appear in the CEC "Valid NAICS codes" list',
+        severity=Severity.ERROR,
+        locator='field definition "NAICS Code"',
+        quote=_NAICS_QUOTE,
+        applies=lambda p: p.naics_column is not None,
+        implemented=False,
+        unimplemented_reason=(
+            'The instructions require the code to "match the list of Valid '
+            'NAICS codes" and direct the filer to see that list, but the list '
+            "itself is not published at any URL this project was able to "
+            "retrieve from energy.ca.gov. Membership is therefore not checked. "
+            "Length is still checked, by QP017, and the CEC custom "
+            "classification codes are still checked, by QP023."
+        ),
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP019",
+        title='Numeric fields must carry "0" rather than a blank, "NULL" or "-"',
+        severity=Severity.ERROR,
+        locator="footnote to the numeric field definitions, note (1)",
+        quote=_ZERO_PLACEHOLDER_QUOTE,
+        applies=lambda p: bool(p.numeric_columns),
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP020",
+        title="Numeric fields must not contain non-numeric characters",
+        severity=Severity.ERROR,
+        locator="footnote to the numeric field definitions, note (2)",
+        quote=_NON_NUMERIC_QUOTE,
+        applies=lambda p: bool(p.numeric_columns),
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP021",
+        title="Company Number must be present on every row",
+        severity=Severity.ERROR,
+        locator='field definition "Company Number"',
+        quote="The identification number assigned by CEC staff.",
+        applies=lambda p: p.company_number_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP022",
+        title="Utility Distribution Company must be PGE, SCE or SDGE",
+        severity=Severity.ERROR,
+        locator='field definition "Utility Distribution Company (UDC)"',
+        quote=(
+            "IMPORTANT: The only valid UDC values are PGE, SCE, and SDGE. "
+            "Please enter the UDC exactly as spelled out here with no special "
+            'characters, such as "&".'
+        ),
+        applies=lambda p: p.udc_column is not None,
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP023",
+        title="A residential classification code must appear in the published RE code table",
+        severity=Severity.ERROR,
+        locator=(
+            'the table "Residential CEC Custom Classification Codes" and the '
+            "CEC custom classification code table below the NAICS Code "
+            "field definition"
+        ),
+        quote=(
+            "For residential, streetlighting, water pump and unclassified "
+            "customers, please use the following CEC custom classification codes."
+        ),
+        applies=lambda p: p.naics_column is not None,
+        tags=("field", "codeset"),
+    ),
+    # -----------------------------------------------------------------------
+    # Cross-row rules
+    # -----------------------------------------------------------------------
+    RuleSpec(
+        id="QP030",
+        title="All months in a submission should fall within one calendar quarter",
+        severity=Severity.WARNING,
+        locator='"When to file"',
+        quote=_WHEN_TO_FILE_QUOTE,
+        applies=lambda p: p.month_column is not None,
+        tags=("cross-row",),
+    ),
+    RuleSpec(
+        id="QP031",
+        title="All rows in a submission should carry the same reporting year",
+        severity=Severity.WARNING,
+        locator='"When to file"',
+        quote=_WHEN_TO_FILE_QUOTE,
+        applies=lambda p: p.year_column is not None,
+        tags=("cross-row",),
+    ),
+    RuleSpec(
+        id="QP032",
+        title="A submission should not repeat the same reporting key twice",
+        severity=Severity.WARNING,
+        locator='"Important Template Notes" / "Notes: Each data submission shall"',
+        quote=_EXTRA_INFO_QUOTE,
+        applies=_always,
+        implemented=False,
+        unimplemented_reason=(
+            "No published document states which combination of columns forms "
+            "the unique reporting key for a row, so the tool cannot tell a "
+            "duplicate from two legitimate rows that happen to share the "
+            "columns it can see. Choosing a key would be an invention, so this "
+            "rule is registered and left unevaluated."
+        ),
+        tags=("cross-row",),
+    ),
+)
+
+
+RULE_SPECS_BY_ID: Mapping[str, RuleSpec] = {spec.id: spec for spec in RULE_SPECS}
+
+
+def specs_for(profile: Profile) -> tuple[RuleSpec, ...]:
+    """Return the rule specs that apply to a profile, in registry order."""
+    return tuple(spec for spec in RULE_SPECS if spec.applies(profile))
+
+
+def rules_for(profile: Profile) -> tuple[Rule, ...]:
+    """Return the bound rules that apply to a profile, in registry order."""
+    return tuple(spec.bind(profile) for spec in specs_for(profile))
