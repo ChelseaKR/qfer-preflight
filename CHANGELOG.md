@@ -28,7 +28,13 @@ breaking change and is recorded here.
   numbers, residential classification codes, CEC custom classification codes,
   gas rate codes, customer types, customer groups and valid UDC values.
 - `check`, `rules` and `profiles` commands, with text and JSON output.
-- `--strict`, which also exits non-zero when any rule could not be evaluated.
+- `--strict`, which also exits non-zero when any rule could not be evaluated,
+  exercised end to end through the real command line entry point.
+- Tests for the release workflow's fail-closed behaviour. The guard that stops
+  the job when `RELEASE_ALLOWED_SIGNERS` is unset is lifted out of the workflow
+  file and run in a real shell, unset and blank, and both stop the job.
+- A "Releasing" section in `CONTRIBUTING.md` documenting the one manual setup
+  step a first release needs.
 
 ### Notes
 
