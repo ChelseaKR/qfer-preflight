@@ -230,6 +230,21 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         applies=_always,
         tags=("structural",),
     ),
+    RuleSpec(
+        id="QP007",
+        title="Submission must not repeat the header row among the data",
+        severity=Severity.ERROR,
+        locator='"Important Template Notes" / "Notes: Each data submission shall"',
+        quote=_EXTRA_INFO_QUOTE,
+        # Only the two documents whose published sentence names "extra
+        # headers". The applicability is read off the transcribed quote rather
+        # than a list of profile ids, so the rule cannot outlive the text it
+        # rests on: correct the transcription and the rule follows. The other
+        # three documents publish the same sentence without those words, and
+        # there a duplicated header row stays an advisory. See ADR 0007.
+        applies=lambda p: "extra headers" in (_resolve(_EXTRA_INFO_QUOTE, p.id) or ""),
+        tags=("structural",),
+    ),
     # -----------------------------------------------------------------------
     # Field rules
     # -----------------------------------------------------------------------

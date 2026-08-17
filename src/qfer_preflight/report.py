@@ -9,9 +9,9 @@ compare runs.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
-from .model import Report, Severity, severity_rank
+from .model import Finding, Report, Severity, severity_rank
 from .rules import RuleSpec
 
 _SEVERITY_LABEL = {
@@ -20,6 +20,14 @@ _SEVERITY_LABEL = {
     Severity.INFO: "INFO",
     Severity.UNVALIDATED: "UNVAL",
 }
+
+# How many distinct findings this rendering prints for one rule and column.
+# Identical findings are already merged into one line before they get here, so
+# reaching this means that many genuinely different messages, most often the
+# same mistake made with a different value in every row. The text stops
+# listing them and says how many it stopped at; the JSON rendering carries
+# every one. See ADR 0006.
+_LINES_PER_RULE_AND_COLUMN = 10
 
 
 def to_json(report: Report) -> str:
@@ -37,6 +45,111 @@ def _location(row: int | None, column: str | None, cell: str | None = None) -> s
     return f"row {row}, {column}"
 
 
+def _rows_phrase(rows: Sequence[int]) -> str:
+    return ", ".join(f"{row:,}" for row in rows)
+
+
+def _lines_phrase(count: int) -> str:
+    return f"{count:,} line" if count == 1 else f"{count:,} lines"
+
+
+def _repeat_note(finding: Finding) -> str:
+    """What a merged finding stands for, in one sentence.
+
+    Never silent about the merge: a line that speaks for more than one row
+    always says how many, and names as many of them as it kept.
+    """
+    if finding.occurrences == 1:
+        return ""
+    listed = _rows_phrase(finding.example_rows)
+    if finding.occurrences <= len(finding.example_rows):
+        return f"The same finding appears on {finding.occurrences:,} rows: rows {listed}."
+    span = ""
+    if finding.example_rows and finding.last_row is not None:
+        span = f", from row {finding.example_rows[0]:,} to row {finding.last_row:,}"
+    return (
+        f"The same finding appears on {finding.occurrences:,} rows{span}. "
+        f"First rows: {listed}. The rest are counted, not listed."
+    )
+
+
+def _findings_section(report: Report) -> list[str]:
+    """The findings list, plus a statement of everything it collapsed."""
+    ordered = sorted(
+        report.checked_findings(),
+        key=lambda f: (
+            severity_rank(f.severity.value),
+            f.row if f.row is not None else -1,
+            f.rule_id,
+        ),
+    )
+    if not ordered:
+        return ["Findings: none", ""]
+
+    body: list[str] = []
+    shown = 0
+    seen: dict[tuple[str, str], int] = {}
+    withheld: dict[tuple[str, str], list[int]] = {}
+    for finding in ordered:
+        key = (finding.rule_id, finding.column or "")
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > _LINES_PER_RULE_AND_COLUMN:
+            tally = withheld.setdefault(key, [0, 0])
+            tally[0] += 1
+            tally[1] += finding.occurrences
+            continue
+        shown += 1
+        label = _SEVERITY_LABEL[finding.severity]
+        where = _location(finding.row, finding.column, finding.cell)
+        body.append(f"  [{label}] {finding.rule_id}  {where}: {finding.message}")
+        note = _repeat_note(finding)
+        if note:
+            body.append(f"      {note}")
+
+    body.extend(_withheld_lines(withheld))
+    body.extend(_collapse_note(report, len(ordered)))
+    body.append("")
+    return [_findings_heading(len(ordered), report.finding_count, shown), *body]
+
+
+def _findings_heading(line_count: int, total: int, shown: int) -> str:
+    """Say up front how many lines there are, and how many of them are printed."""
+    if total == line_count and shown == line_count:
+        return f"Findings ({line_count}):"
+    bits = [_lines_phrase(line_count)]
+    if total != line_count:
+        bits.append(f"standing for {total:,} findings")
+    if shown != line_count:
+        bits.append(f"{shown:,} listed below")
+    return "Findings (" + ", ".join(bits) + "):"
+
+
+def _withheld_lines(withheld: dict[tuple[str, str], list[int]]) -> list[str]:
+    lines = []
+    for (rule_id, column), (distinct, occurrences) in sorted(withheld.items()):
+        where = f" in column {column}" if column else ""
+        lines.append(
+            f"  [MORE] {rule_id}  {distinct:,} further findings{where} are not "
+            f"listed here, covering {occurrences:,} rows. Each has a different "
+            f"message, so this text report stops at {_LINES_PER_RULE_AND_COLUMN} "
+            "for one rule and column. Re-run with --format json for every one."
+        )
+    return lines
+
+
+def _collapse_note(report: Report, line_count: int) -> list[str]:
+    merged = report.merged_finding_count
+    if not merged:
+        return []
+    return [
+        f"  Collapsed: {merged:,} findings repeated a rule, a column and a message "
+        f"already reported, and were merged into {_lines_phrase(line_count)}. Two "
+        "findings merge only when all three are identical, so no message was "
+        "rewritten and no distinct problem was hidden. Every line says how many "
+        "rows it stands for."
+    ]
+
+
 def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str:
     """Human readable rendering."""
     lines: list[str] = []
@@ -47,25 +160,7 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
     lines.append(f"rows    : {report.rows_read}")
     lines.append(f"status  : {report.status.value.upper()}")
     lines.append("")
-
-    ordered = sorted(
-        report.findings,
-        key=lambda f: (
-            severity_rank(f.severity.value),
-            f.row if f.row is not None else -1,
-            f.rule_id,
-        ),
-    )
-    if ordered:
-        lines.append(f"Findings ({len(ordered)}):")
-        for finding in ordered:
-            label = _SEVERITY_LABEL[finding.severity]
-            where = _location(finding.row, finding.column, finding.cell)
-            lines.append(f"  [{label}] {finding.rule_id}  {where}: {finding.message}")
-        lines.append("")
-    else:
-        lines.append("Findings: none")
-        lines.append("")
+    lines.extend(_findings_section(report))
 
     if report.advisories:
         lines.append(f"Advisories ({len(report.advisories)}):")
@@ -74,7 +169,7 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
             "wrong. They are things the reader noticed, or had to do to the "
             "bytes, that a report with no findings would otherwise hide."
         )
-        for advisory in report.advisories:
+        for advisory in report.checked_advisories():
             where = _location(advisory.row, advisory.column)
             lines.append(f"  [ADVIS] {advisory.code}  {where}: {advisory.message}")
         lines.append("")

@@ -39,10 +39,20 @@ README. Never guess.
 - Never let a report be silent about something the reader noticed. Anything no
   published rule covers goes in the advisory channel, with an `ADV-` code, no
   severity and no citation, and it keeps the verdict off `pass`. Advisories are
-  not a back door for checks that could not survive as rules: an advisory
-  cannot carry a severity or a citation, and must say in its own text that no
-  published rule covers it. See ADR 0004 and
+  not a back door for checks that could not survive as rules: the code space is
+  closed by `ADVISORY_CODES`, an advisory cannot carry a severity or a
+  citation, and the constructor refuses a message that does not say the
+  published record fails to cover what it noticed. See ADR 0004 and
   `tests/test_adversarial_input.py`, also load-bearing.
+- Never withhold a finding without saying so. Identical findings, meaning same
+  rule, same column, same message, merge into one line that reports its own
+  count and example rows; nothing else merges. The one bounded listing, ten
+  distinct findings per rule and column in the text rendering, states what it
+  did not print and points at the JSON, which holds everything. See ADR 0006.
+- Published documents differ from each other, not only from silence. Where one
+  form's instructions publish text another's does not, the rule applies only to
+  the form whose text says it, and applicability is derived from the
+  transcribed quote rather than a list of profile ids. See ADR 0007.
 - Write digit classes as `[0-9]`, never `\d`. Python's `\d` matches every
   Unicode decimal digit and `int()` converts them, which once let a fullwidth
   Month through with no finding.

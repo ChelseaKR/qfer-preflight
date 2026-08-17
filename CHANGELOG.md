@@ -19,9 +19,9 @@ breaking change and is recorded here.
 - Five form profiles covering the QFER Consumption CSV reports: `CEC-1306A-S1`,
   `CEC-1306A-S2`, `CEC-1306B`, `CEC-1308B-S1` and `CEC-1308C`. Header rows are
   transcribed from the published CSV templates.
-- Twenty-two implemented rules (QP001 to QP004, QP006, QP010 to QP017, QP019
-  to QP025, QP030, QP031), each carrying a stable identifier, a severity, and a
-  citation to the published document it was derived from.
+- Twenty-three implemented rules (QP001 to QP004, QP006, QP007, QP010 to
+  QP017, QP019 to QP025, QP030, QP031), each carrying a stable identifier, a
+  severity, and a citation to the published document it was derived from.
 - QP024, a warning that a County Number is written zero padded, for example
   `07`. This replaces an error the tool used to report on no published
   authority. See ADR 0003.
@@ -51,6 +51,23 @@ breaking change and is recorded here.
   files, each asserted to produce a report that is neither a pass nor silent.
 - Spreadsheet cell references on findings, so a message points at `D2` rather
   than leaving the filer to count commas.
+- QP007, an error when a data row is an exact copy of the header row. It is
+  registered only for `CEC-1306B` and `CEC-1308C`, the two forms whose
+  published "Important Template Notes" sentence says to exclude "extra
+  headers". The other three publish the same sentence without those words, and
+  there the same row stays an `ADV-REPEATED-HEADER` advisory. See ADR 0007.
+- Identical findings are merged into one line carrying the number of rows it
+  stands for, the first five of them and the last. A file with the same wrong
+  county in 400,000 rows reports one line rather than 400,000. Two findings
+  merge only when their rule, their column and their message text all match.
+  See ADR 0006.
+- A `collapsed` object in the JSON report, stating the merge policy and how
+  many findings were merged, and `counts.finding_lines` alongside
+  `counts.findings`, so a caller can tell entries from occurrences.
+- `tests/test_collapsing.py` and `tests/test_advisory_channel.py`. The first
+  holds the merge to terms on which it loses nothing. The second attacks the
+  advisory channel on the assumption that an output carrying no citation is
+  where an invented check would try to enter.
 
 ### Fixed
 
@@ -68,9 +85,29 @@ breaking change and is recorded here.
   been.
 - Rows are streamed rather than held in memory all at once, which cuts peak
   memory on a large filing by more than half.
+- A CSV parse failure no longer discards what was observed about the file
+  itself. A byte order mark and disagreeing line endings are true of the bytes
+  whether or not the reader reached the end of them, and one of them may be
+  why it did not, so `ADV-BOM` and `ADV-LINE-ENDINGS` now survive a parse
+  failure while every finding and every row-level advisory is still discarded.
+- `ADV-BOM` is raised before the file is decoded, so a file that is not UTF-8
+  still reports the mark on its front, and its wording no longer claims
+  anything about a header check that may never have run.
+- `ADV-HIDDEN-CHARACTER` no longer claims that no implemented rule constrains
+  the column it fired on. That was false of, for example, a NAICS Code that
+  satisfied QP017 on length. It now says what is true: nothing published
+  addresses an invisible character, and no rule objected to this value.
+- A finding can no longer be attributed to a rule the same report lists as
+  never applied, and a report is refused if one ever is.
 
 ### Changed
 
+- `counts.error`, `counts.warning` and `counts.info` in the JSON report now
+  count rows rather than report lines, so a merged finding on 400,000 rows
+  counts 400,000. `counts.finding_lines` counts the entries.
+- The advisory code space is closed. An advisory cannot be constructed with a
+  code outside `ADVISORY_CODES`, and cannot be constructed at all unless its
+  own text says the published record does not cover what it noticed.
 - Finding messages now say what to change, not only what is wrong. A header
   mismatch reports a difference by difference comparison, names the delimiter
   when the file is not comma separated, and collapses to one sentence when

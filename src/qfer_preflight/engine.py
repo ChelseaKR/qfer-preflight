@@ -27,6 +27,7 @@ import hashlib
 import io
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from dataclasses import dataclass, field
 
 from . import __version__
 from .codes import (
@@ -50,7 +51,7 @@ from .describe import (
     hidden_characters,
     show,
 )
-from .model import Advisory, Finding, NotEvaluated, Report
+from .model import Advisory, Finding, NotEvaluated, Report, Severity
 from .profiles import Profile
 from .rules import RuleSpec, specs_for
 
@@ -76,6 +77,16 @@ _HEADER_INDEPENDENT = frozenset({"QP001", "QP002", "QP004", "QP006"})
 # counting but stops listing, so a formula in every row of a 400,000 row file
 # is one line with a count rather than 400,000 lines.
 _ADVISORY_EXAMPLES = 5
+
+# How many example rows a merged finding names. Unlike the advisory cap above
+# this discards nothing: the count, the first rows and the last row are all
+# kept, and only rows in the middle of a run of identical findings go unnamed.
+_FINDING_EXAMPLES = 5
+
+# Advisories about the file as an object rather than about anything inside it.
+# These stay true whether or not the file went on to parse, so they survive a
+# parse failure that throws every finding away. See ADR 0006.
+FILE_LEVEL_ADVISORY_CODES = frozenset({"ADV-BOM", "ADV-LINE-ENDINGS"})
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -129,18 +140,76 @@ def _numeric_suggestion(value: str) -> str:
     return f" Written the way the instructions ask, this value is {stripped}."
 
 
+@dataclass(slots=True)
+class _FindingGroup:
+    """One finding and every row that produced exactly the same one.
+
+    Grouping happens here, as the findings are gathered, rather than in the
+    renderer. A file with a bad county in all 400,000 rows would otherwise
+    build 400,000 objects each holding the same three hundred character
+    message before anything got the chance to summarise them.
+    """
+
+    rule_id: str
+    severity: Severity
+    message: str
+    row: int | None
+    column: str | None
+    cell: str | None
+    occurrences: int = 1
+    example_rows: list[int] = field(default_factory=list)
+    last_row: int | None = None
+
+    def record(self, row: int | None) -> None:
+        self.occurrences += 1
+        if row is None:
+            return
+        self.last_row = row
+        if len(self.example_rows) < _FINDING_EXAMPLES:
+            self.example_rows.append(row)
+
+    def to_finding(self) -> Finding:
+        repeated = self.occurrences > 1
+        return Finding(
+            rule_id=self.rule_id,
+            severity=self.severity,
+            message=self.message,
+            row=self.row,
+            column=self.column,
+            cell=self.cell,
+            occurrences=self.occurrences,
+            example_rows=tuple(self.example_rows) if repeated else (),
+            last_row=self.last_row if repeated else None,
+        )
+
+
 class _Collector:
     """Accumulates findings and tracks which rules actually ran."""
 
     def __init__(self, specs: Sequence[RuleSpec], profile: Profile | None = None) -> None:
         self._specs = {spec.id: spec for spec in specs}
         self._profile = profile
-        self.findings: list[Finding] = []
-        self._finding_cells: set[tuple[int, str]] = set()
+        # Keyed by rule, column and the message text, which is what makes two
+        # findings the same finding. Insertion order is first-seen order.
+        self._groups: dict[tuple[str, str, str], _FindingGroup] = {}
+        # Only the row currently being checked. `has_finding_at` is asked about
+        # that row and no other, so keeping the whole file's worth would cost
+        # memory proportional to the findings for no gain.
+        self._cells_row: int | None = None
+        self._cells: set[str] = set()
         self._evaluated: set[str] = set()
         self._not_evaluated: dict[str, str] = {}
         self._advisories: dict[tuple[str, str], Advisory] = {}
         self._advisory_counts: dict[tuple[str, str], int] = {}
+
+    @property
+    def findings(self) -> list[Finding]:
+        return [group.to_finding() for group in self._groups.values()]
+
+    def has_rule(self, rule_id: str) -> bool:
+        """Whether this profile registers the rule, and it is implemented."""
+        spec = self._specs.get(rule_id)
+        return spec is not None and spec.implemented
 
     def mark_evaluated(self, *rule_ids: str) -> None:
         for rule_id in rule_ids:
@@ -169,19 +238,41 @@ class _Collector:
         row: int | None = None,
         column: str | None = None,
     ) -> None:
+        """Report a finding, merging it with an identical one already held."""
         spec = self._specs[rule_id]
-        self.findings.append(
-            Finding(
+        if not spec.implemented:
+            # A report cannot both assert a violation of a rule and list that
+            # rule as never applied. Registering a rule as unimplemented is a
+            # statement that no deterministic test for it exists, so a finding
+            # citing one would be an assertion the registry contradicts.
+            raise ValueError(
+                f"rule {rule_id} is registered as unimplemented and reported as "
+                "not evaluated, so it cannot also produce a finding"
+            )
+        key = (rule_id, column or "", message)
+        group = self._groups.get(key)
+        if group is None:
+            self._groups[key] = _FindingGroup(
                 rule_id=rule_id,
                 severity=spec.severity,
                 message=message,
                 row=row,
                 column=column,
                 cell=self._cell_reference(row, column),
+                example_rows=[] if row is None else [row],
+                last_row=row,
             )
-        )
-        if row is not None and column is not None:
-            self._finding_cells.add((row, column))
+        else:
+            group.record(row)
+        self._note_cell(row, column)
+
+    def _note_cell(self, row: int | None, column: str | None) -> None:
+        if row is None or column is None:
+            return
+        if row != self._cells_row:
+            self._cells_row = row
+            self._cells = set()
+        self._cells.add(column)
 
     def advise(
         self,
@@ -201,8 +292,12 @@ class _Collector:
         )
 
     def has_finding_at(self, row: int, column: str) -> bool:
-        """Whether a cited rule has already spoken about this exact cell."""
-        return (row, column) in self._finding_cells
+        """Whether a cited rule has already spoken about this exact cell.
+
+        Only ever asked about the row being checked, which is why only that
+        row's cells are kept.
+        """
+        return row == self._cells_row and column in self._cells
 
     def register_unimplemented(self) -> None:
         for spec in self._specs.values():
@@ -229,6 +324,30 @@ class _Collector:
             for rid, reason in sorted(self._not_evaluated.items())
         ]
 
+    def file_observations(self) -> list[Advisory]:
+        """Advisories about the file itself rather than about a row in it.
+
+        A byte order mark is in the bytes whether or not the CSV reader got to
+        the end, so these are the observations that survive a parse failure.
+        """
+        return [
+            advisory
+            for advisory in self._advisories.values()
+            if advisory.code in FILE_LEVEL_ADVISORY_CODES
+            and advisory.row is None
+            and advisory.column is None
+        ]
+
+    def readvise(self, advisories: Iterable[Advisory]) -> None:
+        """Re-raise advisories carried over from an abandoned collector.
+
+        Deliberately routed back through `advise` rather than copied into the
+        dictionary, so that every advisory in every report has passed the same
+        construction checks exactly once.
+        """
+        for advisory in advisories:
+            self.advise(advisory.code, advisory.message)
+
     @property
     def advisories(self) -> list[Advisory]:
         """Every advisory, with a tail entry wherever the listing was capped."""
@@ -242,7 +361,9 @@ class _Collector:
                     code=code,
                     message=(
                         f"{total} cells{where} raised this advisory. The first "
-                        f"{_ADVISORY_EXAMPLES} are listed above; the rest are counted only."
+                        f"{_ADVISORY_EXAMPLES} are listed above; the rest are counted "
+                        "only. As with every advisory, no published CEC document "
+                        "addresses any of them."
                     ),
                     column=column or None,
                     occurrences=total,
@@ -287,17 +408,27 @@ def _line_ending_advisory(collector: _Collector, text: str) -> None:
 
 
 def _bom_advisory(collector: _Collector, data: bytes) -> None:
+    """Note a byte order mark, which is a fact about the file, not about a row.
+
+    Raised before the file is decoded, so it is reported whatever happens
+    next. The wording says only what is true on every path: the reader took
+    the mark off the front before doing anything else. It cannot say the
+    header check ignored it, because on the paths where the file never parsed
+    there was no header check.
+    """
     if not data.startswith(_UTF8_BOM):
         return
     collector.advise(
         "ADV-BOM",
         (
             "The file begins with a UTF-8 byte order mark, the bytes EF BB BF. "
-            "This reader removed it before matching the header, so the header "
-            "check below ignored it. Software that does not remove it reads "
-            "the first column name with an invisible character in front and "
-            "will not match the template. If the header is rejected after this "
-            "tool accepted it, re-save the file without the byte order mark."
+            "This reader removed it before reading anything else, so nothing "
+            "reported below was affected by it. Software that does not remove "
+            "it reads the first column name with an invisible character in "
+            "front and will not match the template. No published CEC document "
+            "addresses a byte order mark in a submission. If the header is "
+            "rejected after this tool accepted it, re-save the file without "
+            "the byte order mark."
         ),
     )
 
@@ -362,6 +493,12 @@ def _hidden_character_advisory(
     When a rule did fire on the same cell, its own message already names the
     character, so repeating it here would be noise and would also be untrue:
     the advisory says no published rule covers the value, and one just did.
+
+    The wording is careful for the same reason. It used to say that no rule
+    this tool implements constrains the column, which is false of, say, a
+    NAICS Code that satisfied QP017 on length. What is true, and all that is
+    claimed, is that nothing published addresses an invisible character and
+    that no rule objected to this particular value.
     """
     if collector.has_finding_at(row_number, column):
         return
@@ -373,10 +510,11 @@ def _hidden_character_advisory(
         "ADV-HIDDEN-CHARACTER",
         (
             f"{column} on row {row_number} contains {names}, which a "
-            "spreadsheet does not show. No published rule this tool implements "
-            "constrains the contents of this column, so the value is reported "
-            f"here rather than as a finding. The cell reads {show(value)}. "
-            "Retype it if the character was not intended."
+            "spreadsheet does not show. No published CEC document addresses an "
+            "invisible character in a cell, and no rule this tool implements "
+            "objected to this value, so it is reported here rather than as a "
+            f"finding. The cell reads {show(value)}. Retype it if the "
+            "character was not intended."
         ),
         row=row_number,
         column=column,
@@ -752,18 +890,43 @@ def _rate_code_legend() -> str:
     return f" The published codes describe the type of gas delivery: {listing}."
 
 
-def _repeated_header_advisory(
+def _repeated_header_row(
     collector: _Collector, profile: Profile, row: Sequence[str], row_number: int
 ) -> None:
+    """Report a duplicated header row, as a rule or as an advisory.
+
+    Which one depends on the form. Two of the five instruction documents,
+    CEC-1306B and CEC-1308C, publish the sentence "Exclude any extra
+    information, including extra headers, ..."; the other three publish the
+    same sentence without the words "extra headers". So the same row is a
+    cited error on two forms and an advisory on the other three, and QP007 is
+    registered only where the text exists. See ADR 0007.
+    """
     if tuple(row) != profile.header:
+        return
+    tail = (
+        "The findings above treat it as data, which is why they complain that "
+        "a Year reads 'Year'. Deleting this one row clears all of them. It "
+        "most often appears when several quarters were pasted into one file."
+    )
+    if collector.has_rule("QP007"):
+        collector.add(
+            "QP007",
+            (
+                f"Row {row_number} is an exact copy of the header row, and the "
+                "instructions for this form say to exclude extra headers from a "
+                f"submission. {tail}"
+            ),
+            row=row_number,
+        )
         return
     collector.advise(
         "ADV-REPEATED-HEADER",
         (
-            f"Row {row_number} is an exact copy of the header row. The findings "
-            "above treat it as data, which is why they complain that a Year "
-            "reads 'Year'. Deleting this one row clears all of them. It most "
-            "often appears when several quarters were pasted into one file."
+            f"Row {row_number} is an exact copy of the header row. The "
+            "instructions for this form do not mention extra header rows, so "
+            "no published text this tool can cite calls the row wrong and it "
+            f"is reported here rather than as a finding. {tail}"
         ),
         row=row_number,
     )
@@ -773,7 +936,7 @@ def _row_advisories(
     collector: _Collector, profile: Profile, row: Sequence[str], row_number: int
 ) -> None:
     """Record what no published rule covers, so a quiet row is not a clean one."""
-    _repeated_header_advisory(collector, profile, row, row_number)
+    _repeated_header_row(collector, profile, row, row_number)
     for index, column in enumerate(profile.header):
         value = row[index]
         # Almost every cell in a real filing is plain printable ASCII. Skipping
@@ -947,6 +1110,9 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
     )
 
     collector.mark_evaluated("QP001")
+    # Before the decode, not after it. A byte order mark is a fact about the
+    # file, and it is still a fact when the file turns out not to be UTF-8.
+    _bom_advisory(collector, data)
     text, decode_error = _decode(data)
     if text is None:
         _blocked(
@@ -968,7 +1134,6 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
         )
         return _finish(report, collector, 0)
 
-    _bom_advisory(collector, data)
     _line_ending_advisory(collector, text)
 
     if _unterminated_quote(text):
@@ -1001,7 +1166,7 @@ def _read_and_scan(
     try:
         header = _next_row(rows)
     except _CsvParseFailure as failure:
-        return _parse_failure(report, specs, profile, failure.detail)
+        return _parse_failure(report, specs, profile, failure.detail, collector)
 
     if header is None:
         _blocked(
@@ -1028,7 +1193,7 @@ def _read_and_scan(
     try:
         data_rows = _scan_rows(collector, profile, rows, header_ok)
     except _CsvParseFailure as failure:
-        return _parse_failure(report, specs, profile, failure.detail)
+        return _parse_failure(report, specs, profile, failure.detail, collector)
 
     if not header_ok:
         collector.mark_not_evaluated(
@@ -1054,7 +1219,11 @@ def _read_and_scan(
 
 
 def _parse_failure(
-    report: Report, specs: Sequence[RuleSpec], profile: Profile, detail: str
+    report: Report,
+    specs: Sequence[RuleSpec],
+    profile: Profile,
+    detail: str,
+    abandoned: _Collector,
 ) -> Report:
     """Throw away every finding gathered before the reader gave up.
 
@@ -1062,6 +1231,14 @@ def _parse_failure(
     the part that parsed, because the reader cannot know what the rest of it
     would have said. Reporting the findings from the readable prefix alongside
     a parse error would invite reading the prefix as validated. It was not.
+
+    What does survive is what was observed about the file rather than about
+    its contents. A byte order mark on the front, and line endings that do not
+    agree with each other, are true of the bytes whether or not the CSV reader
+    reached the end of them, and are worth knowing precisely because one of
+    them may be why it did not. Throwing those away with the findings was
+    discarding an observation the reader had already made and could still
+    stand behind. See ADR 0006.
     """
     fresh = _Collector(specs, profile)
     fresh.register_unimplemented()
@@ -1071,10 +1248,12 @@ def _parse_failure(
         (
             f"The file could not be parsed as CSV: {detail}. No rule was "
             "applied to any part of it, including the rows before the point "
-            "where parsing stopped."
+            "where parsing stopped. Any advisory below describes the file "
+            "itself and still stands."
         ),
         "The submission could not be parsed, so this rule was never applied.",
     )
+    fresh.readvise(abandoned.file_observations())
     return _finish(report, fresh, 0)
 
 
@@ -1084,7 +1263,27 @@ def _finish(report: Report, collector: _Collector, rows_read: int) -> Report:
     report.rules_not_evaluated = collector.not_evaluated
     report.advisories = collector.advisories
     report.rows_read = rows_read
+    _refuse_contradictions(report)
     return report
+
+
+def _refuse_contradictions(report: Report) -> None:
+    """No report may cite a rule it also says it never applied.
+
+    Every gating path in this module blocks rules and reports findings from
+    the same collector, so the two lists agree by construction. This is the
+    check that keeps them agreeing after the next change to that gating: a
+    finding attributed to a rule sitting in the unevaluated list would be a
+    report contradicting itself in the reader's favour, claiming a check it
+    also admits it did not run.
+    """
+    evaluated = set(report.rules_evaluated)
+    orphaned = sorted({f.rule_id for f in report.checked_findings() if f.rule_id not in evaluated})
+    if orphaned:  # pragma: no cover - a bug in the gating, not reachable input
+        raise ValueError(
+            f"report cites {', '.join(orphaned)} in its findings but does not list "
+            "the rule as evaluated, so the report contradicts itself"
+        )
 
 
 def validate_path(path: str, profile: Profile) -> Report:

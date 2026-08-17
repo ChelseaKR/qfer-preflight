@@ -28,7 +28,7 @@ from qfer_preflight.profiles import (
     Profile,
     get_profile,
 )
-from qfer_preflight.rules import RULE_SPECS, rules_for, specs_for
+from qfer_preflight.rules import RULE_SPECS, RULE_SPECS_BY_ID, rules_for, specs_for
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -104,6 +104,70 @@ def test_no_dash_characters_in_published_quotes() -> None:
             for text in (rule.title, rule.quote or "", rule.citation.locator):
                 assert "\u2014" not in text  # em dash
                 assert "\u2013" not in text  # en dash
+
+
+# ---------------------------------------------------------------------------
+# QP007, which exists on two forms and not on the other three
+# ---------------------------------------------------------------------------
+
+
+def test_qp007_applies_only_where_extra_headers_is_published() -> None:
+    """The rule follows the text, and the text is in two of the five documents.
+
+    CEC-1306B and CEC-1308C publish "Exclude any extra information, including
+    extra headers, ...". The other three publish the same sentence without
+    those two words. See ADR 0007.
+    """
+    applied = {p.id for p in PROFILES.values() if RULE_SPECS_BY_ID["QP007"].applies(p)}
+    assert applied == {"CEC-1306B", "CEC-1308C"}
+
+    for profile_id in applied:
+        quote = RULE_SPECS_BY_ID["QP007"].bind(PROFILES[profile_id]).quote
+        assert quote is not None and "extra headers" in quote
+
+
+@pytest.mark.parametrize("profile_id", ["CEC-1306B", "CEC-1308C"])
+def test_a_repeated_header_row_is_an_error_where_the_text_says_so(profile_id: str) -> None:
+    profile = PROFILES[profile_id]
+    header = ",".join(profile.header)
+    row = ",".join("1" for _ in profile.header)
+    report = validate_bytes(_rows(profile, row, header), profile, "x.csv")
+
+    assert "QP007" in _fired(report)
+    finding = next(f for f in report.findings if f.rule_id == "QP007")
+    assert finding.severity is Severity.ERROR
+    assert "extra headers" in finding.message
+    assert {a.code for a in report.advisories} == set()
+
+
+@pytest.mark.parametrize(
+    "profile", [PROFILE_1306A_S1, PROFILE_1308B_S1], ids=["1306A-S1", "1308B-S1"]
+)
+def test_a_repeated_header_row_stays_an_advisory_where_the_text_is_silent(
+    profile: Profile,
+) -> None:
+    """No citation, so no error. The disagreement is with the other two forms."""
+    header = ",".join(profile.header)
+    row = ",".join("1" for _ in profile.header)
+    report = validate_bytes(_rows(profile, row, header), profile, "x.csv")
+
+    assert "QP007" not in _fired(report)
+    assert "ADV-REPEATED-HEADER" in {a.code for a in report.advisories}
+    advisory = next(a for a in report.advisories if a.code == "ADV-REPEATED-HEADER")
+    assert "do not mention extra header rows" in advisory.message
+
+
+def test_a_form_without_qp007_does_not_list_it_at_all() -> None:
+    """Not evaluated is for rules that apply. This one does not apply."""
+    report = validate_path(str(FIXTURES / "1306a_s1_clean.csv"), PROFILE_1306A_S1)
+    assert "QP007" not in report.rules_evaluated
+    assert "QP007" not in {n.rule_id for n in report.rules_not_evaluated}
+
+
+def test_a_clean_1306b_file_does_not_trip_qp007() -> None:
+    report = validate_path(str(FIXTURES / "1306b_clean.csv"), PROFILE_1306B)
+    assert "QP007" not in _fired(report)
+    assert "QP007" in report.rules_evaluated
 
 
 # ---------------------------------------------------------------------------

@@ -155,12 +155,19 @@ class Rule:
 
 @dataclass(frozen=True, slots=True)
 class Finding:
-    """One observation about one document.
+    """One observation about one document, possibly repeated across rows.
 
     `cell` is the spreadsheet reference for the offending value, for example
     "D2", so the filer can go straight to it instead of counting commas. It is
     the CSV record number and the column position, which line up with the
     spreadsheet unless a value contains a line break inside quotation marks.
+
+    A finding that recurs identically is reported once rather than once per
+    row. `occurrences` is how many rows produced it, `row` and `cell` point at
+    the first of them, `example_rows` holds the first few, and `last_row` is
+    the final one. Two findings are only ever merged when their rule, their
+    column and their message text are all identical, so merging changes no
+    wording and hides no distinct problem. See ADR 0006.
     """
 
     rule_id: str
@@ -169,6 +176,21 @@ class Finding:
     row: int | None = None
     column: str | None = None
     cell: str | None = None
+    occurrences: int = 1
+    example_rows: tuple[int, ...] = ()
+    last_row: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.occurrences < 1:
+            raise ValueError(
+                f"finding {self.rule_id} claims {self.occurrences} occurrences; a "
+                "finding that happened no times is not a finding"
+            )
+        if len(self.example_rows) > self.occurrences:
+            raise ValueError(
+                f"finding {self.rule_id} lists more example rows than it has "
+                "occurrences, so its count understates what it stands for"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -182,6 +204,11 @@ class Finding:
             payload["column"] = self.column
         if self.cell is not None:
             payload["cell"] = self.cell
+        if self.occurrences != 1:
+            payload["occurrences"] = self.occurrences
+            payload["example_rows"] = list(self.example_rows)
+            if self.last_row is not None:
+                payload["last_row"] = self.last_row
         return payload
 
 
@@ -196,6 +223,27 @@ class NotEvaluated:
         return {"rule_id": self.rule_id, "reason": self.reason}
 
 
+# The complete advisory code space. Nothing outside this table can be
+# constructed, so a new advisory cannot be introduced by writing one line
+# somewhere in the engine: it has to be registered here, next to the four
+# others, where the question "should this have been a rule instead" is
+# unavoidable. See ADR 0004 and ADR 0006.
+ADVISORY_CODES: dict[str, str] = {
+    "ADV-BOM": "The file begins with a UTF-8 byte order mark.",
+    "ADV-LINE-ENDINGS": "The file does not settle on one ordinary line terminator.",
+    "ADV-FORMULA-CELL": "A cell begins with a character a spreadsheet may evaluate.",
+    "ADV-HIDDEN-CHARACTER": "A cell holds a character a spreadsheet does not show.",
+    "ADV-REPEATED-HEADER": "A data row is an exact copy of the header row.",
+}
+
+# Every advisory has to say, in its own words, that the published record does
+# not cover what it noticed. This is the phrase that says it. Requiring it is
+# a blunt instrument and it is meant to be: an advisory is the one output
+# channel with no citation behind it, so the sentence disclaiming published
+# cover is the only thing standing between it and an uncited assertion.
+_NO_PUBLISHED_COVER = "no published"
+
+
 @dataclass(frozen=True, slots=True)
 class Advisory:
     """Something the reader noticed that no published CEC rule addresses.
@@ -207,9 +255,12 @@ class Advisory:
     silently repaired before matching it, previously produced an empty finding
     list that read exactly like a clean file.
 
-    An advisory never carries a severity and never moves the status. It
-    records a fact about the bytes, and what the reader did about it. See
-    ADR 0004.
+    An advisory never carries a severity and never moves the status towards
+    `pass`. It records a fact about the bytes, what the reader did about it,
+    and that the published record does not address it. All three are enforced
+    here rather than left to the author of the next advisory: there is no
+    severity field, the code must be one of `ADVISORY_CODES`, and the message
+    must contain the words that disclaim published cover. See ADR 0004.
     """
 
     code: str
@@ -224,8 +275,22 @@ class Advisory:
                 f"advisory code {self.code!r} must start with 'ADV-' so it cannot "
                 "be mistaken for a rule identifier"
             )
+        if self.code not in ADVISORY_CODES:
+            raise ValueError(
+                f"advisory code {self.code!r} is not registered in ADVISORY_CODES. "
+                "Register it there, or write a rule with a citation instead"
+            )
         if not self.message.strip():
             raise ValueError(f"advisory {self.code} must say what it noticed")
+        if _NO_PUBLISHED_COVER not in self.message.casefold():
+            raise ValueError(
+                f"advisory {self.code} must say in its own text that the published "
+                f"record does not cover what it noticed, using the words "
+                f"{_NO_PUBLISHED_COVER!r}. An advisory carries no citation, so the "
+                "message is the only place a reader learns that"
+            )
+        if self.occurrences < 1:
+            raise ValueError(f"advisory {self.code} claims {self.occurrences} occurrences")
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"code": self.code, "message": self.message}
@@ -254,13 +319,51 @@ class Report:
     advisories: list[Advisory] = field(default_factory=list)
     rows_read: int = 0
 
+    def checked_findings(self) -> list[Finding]:
+        """The finding list, refusing anything that is not a `Finding`.
+
+        The advisory channel has no citation behind it, so the one thing that
+        must never happen is an advisory reaching the findings list, where a
+        reader would take it for a cited rule. Nothing constructs a report
+        that way today. This makes it impossible to start.
+        """
+        for item in self.findings:
+            if not isinstance(item, Finding):
+                raise TypeError(
+                    f"{type(item).__name__} in the findings list. Only a Finding, "
+                    "which carries a rule identifier and therefore a citation, may "
+                    "be reported as one"
+                )
+        return self.findings
+
+    def checked_advisories(self) -> list[Advisory]:
+        """The advisory list, refusing anything that is not an `Advisory`."""
+        for item in self.advisories:
+            if not isinstance(item, Advisory):
+                raise TypeError(f"{type(item).__name__} in the advisory list")
+        return self.advisories
+
+    def _severity_total(self, severity: Severity) -> int:
+        return sum(f.occurrences for f in self.checked_findings() if f.severity is severity)
+
     @property
     def error_count(self) -> int:
-        return sum(1 for f in self.findings if f.severity is Severity.ERROR)
+        """How many rows carry an error, not how many lines report one."""
+        return self._severity_total(Severity.ERROR)
 
     @property
     def warning_count(self) -> int:
-        return sum(1 for f in self.findings if f.severity is Severity.WARNING)
+        return self._severity_total(Severity.WARNING)
+
+    @property
+    def finding_count(self) -> int:
+        """Every occurrence of every finding, before any were merged."""
+        return sum(f.occurrences for f in self.checked_findings())
+
+    @property
+    def merged_finding_count(self) -> int:
+        """How many findings were folded into an identical one."""
+        return self.finding_count - len(self.findings)
 
     @property
     def status(self) -> Status:
@@ -281,7 +384,7 @@ class Report:
 
     def to_dict(self) -> dict[str, Any]:
         ordered = sorted(
-            self.findings,
+            self.checked_findings(),
             key=lambda f: (
                 severity_rank(f.severity.value),
                 f.row if f.row is not None else -1,
@@ -299,10 +402,23 @@ class Report:
             "counts": {
                 "error": self.error_count,
                 "warning": self.warning_count,
-                "info": sum(1 for f in self.findings if f.severity is Severity.INFO),
+                "info": self._severity_total(Severity.INFO),
                 "unvalidated": len(self.rules_not_evaluated),
                 "advisory": len(self.advisories),
                 "rows_read": self.rows_read,
+                # "findings" counts occurrences and "finding_lines" counts the
+                # entries below, which differ whenever a finding repeated.
+                "findings": self.finding_count,
+                "finding_lines": len(self.findings),
+            },
+            "collapsed": {
+                "identical_findings_merged": self.merged_finding_count,
+                "policy": (
+                    "Findings that share a rule, a column and an identical message "
+                    "are reported once, carrying the number of rows they cover, the "
+                    "first few of those rows and the last. No finding is dropped and "
+                    "no message is rewritten."
+                ),
             },
             "findings": [f.to_dict() for f in ordered],
             "rules_evaluated": sorted(self.rules_evaluated),
@@ -312,7 +428,7 @@ class Report:
             "advisories": [
                 a.to_dict()
                 for a in sorted(
-                    self.advisories,
+                    self.checked_advisories(),
                     key=lambda a: (a.code, a.row if a.row is not None else -1, a.column or ""),
                 )
             ],

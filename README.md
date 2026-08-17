@@ -89,16 +89,51 @@ finding.
 
 | Advisory | Raised when |
 |----------|-------------|
-| `ADV-BOM` | The file starts with a UTF-8 byte order mark, which the reader removed before matching the header |
+| `ADV-BOM` | The file starts with a UTF-8 byte order mark, which the reader removed before reading anything else |
 | `ADV-LINE-ENDINGS` | The file mixes line endings, or ends lines with a bare carriage return |
 | `ADV-FORMULA-CELL` | A cell begins with a character a spreadsheet may evaluate as a formula |
-| `ADV-HIDDEN-CHARACTER` | A cell no implemented rule constrains holds an invisible character |
-| `ADV-REPEATED-HEADER` | A data row is an exact copy of the header row |
+| `ADV-HIDDEN-CHARACTER` | A cell holds an invisible character and no rule objected to the value |
+| `ADV-REPEATED-HEADER` | A data row is an exact copy of the header row, on the three forms whose instructions do not mention extra headers. On the other two it is QP007, an error |
 
-ADR 0004 records the reasoning, and `tests/test_adversarial_input.py` holds
-the corpus. Its central assertion is one line applied to every case: a report
+The code space is closed. An advisory cannot be constructed with a code that
+is not in that table, and it cannot be constructed at all unless its own text
+says the published record does not cover what it noticed, because that
+sentence is the only place a reader learns there is no citation behind it.
+
+ADR 0004 records the reasoning. `tests/test_adversarial_input.py` holds the
+corpus, whose central assertion is one line applied to every case: a report
 with no findings and no advisories reads as a clean file, so no hostile input
-may produce one.
+may produce one. `tests/test_advisory_channel.py` attacks the channel itself,
+on the assumption that an output with no citation behind it is where an
+invented check would try to enter.
+
+### Large files, and what a report will not do to fit
+
+Filings run to hundreds of thousands of rows, and the mistakes that reach a
+validator are usually systemic: one wrong county in a lookup table puts the
+same finding on every row. Printing it 400,000 times is not a report.
+
+Findings that are **identical** are merged into one line. Identical means the
+same rule, the same column and the same message text, and since the message
+contains the offending value, that means two rows wrong in the same way with
+the same value. The line carries the count, the first five rows, and the last
+one, so the merge loses nothing but the row numbers in between, which differ
+from the ones shown in nothing except their position.
+
+Nothing about that is left implicit. Each merged line says how many rows it
+stands for, the heading says how many lines stand for how many findings, and a
+closing line says how many were merged and on what terms. In JSON it is a
+`collapsed` object carrying the policy and the count, and `counts` reports
+`findings`, which counts rows, alongside `finding_lines`, which counts
+entries. Severity counts are row counts: `error: 400000` means 400,000 bad
+cells.
+
+The one thing that is genuinely withheld is in the text rendering only. Where
+one rule and column produce more than ten **distinct** findings, which happens
+when every row is wrong in a different way and no merge is possible, the text
+stops there, says how many it did not print, and points at `--format json`,
+which contains every one. ADR 0006 records the whole design, including the
+part of it that loses something.
 
 ## Supported profiles
 
@@ -131,6 +166,7 @@ Implemented and grounded in published text:
 | QP003 | Every data row has the template's field count |
 | QP004 | No blank rows |
 | QP006 | At least one data row is present |
+| QP007 | The header row is not repeated among the data (`CEC-1306B` and `CEC-1308C` only, whose instructions say to exclude extra headers) |
 | QP010 | Year is a four-digit calendar year |
 | QP011 | Month is a whole number from 1 to 12 |
 | QP012 | Quarter Number is 1 to 4 |
@@ -232,6 +268,20 @@ to **add** C. No revision has ever removed `O`, and nothing published since
 mentions it either way. ADR 0005 records the search and its outcome. The call
 flips only on published text stating that `O` is not accepted; the data
 dictionary slide 44 promises, which is still unpublished, would be that text.
+
+### Where the forms ask for different things
+
+Separately from the two disagreements above, the five instruction documents do
+not all say the same thing, and where they differ the rules differ with them.
+
+The "Important Template Notes" sentence is the clearest case. `CEC-1306B` and
+`CEC-1308C` read "Exclude any extra information, including extra headers, data
+for other fields, miscellaneous calculations, blank rows, or totals."
+`CEC-1306A` and `CEC-1308B` publish the same sentence without the words "extra
+headers". So a data row that is an exact copy of the header row is a QP007
+error on the first two forms and an `ADV-REPEATED-HEADER` advisory on the
+other three. The observation is the same either way; what differs is whether
+there is anything to cite. ADR 0007 records it.
 
 ### What is deliberately out of scope
 

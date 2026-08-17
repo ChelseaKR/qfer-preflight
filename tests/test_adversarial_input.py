@@ -254,6 +254,48 @@ def test_a_parse_failure_discards_the_findings_from_the_readable_prefix() -> Non
     assert "including the rows before" in message
 
 
+def test_a_parse_failure_keeps_what_was_observed_about_the_file_itself() -> None:
+    """Discarding the findings is right. Discarding these was not.
+
+    A byte order mark on the front of the file, and line endings that do not
+    agree with each other, are true of the bytes whether or not the CSV reader
+    reached the end of them. They used to be thrown away with the findings,
+    which meant the one report most likely to be caused by a malformed file
+    was the report that said least about how the file was malformed.
+    """
+    oversized = "A" * 200_000
+    body = f"{HEADER}\r{GOOD_ROW}\r101,2025,1,34,B,{oversized},925190,1,1,1\r"
+    report = _check(b"\xef\xbb\xbf" + body.encode())
+
+    assert report.status is Status.FAIL
+    assert _rule_ids(report) == {"QP001"}, "the findings are still discarded"
+    assert _advisory_codes(report) == {"ADV-BOM", "ADV-LINE-ENDINGS"}
+    assert "still stands" in next(f.message for f in report.findings if f.rule_id == "QP001")
+
+
+def test_a_parse_failure_does_not_keep_advisories_about_the_discarded_rows() -> None:
+    """Only observations about the file survive. A row advisory came from a row
+    that was never validated, so it goes with the findings."""
+    oversized = "A" * 200_000
+    body = (
+        f"{HEADER}\n"
+        "=1+1,2025,1,34,B,A1,925190,1200,4500000,1\n"
+        f"101,2025,1,34,B,{oversized},925190,1,1,1\n"
+    )
+    report = _check(body)
+
+    assert _advisory_codes(report) == set()
+    assert _rule_ids(report) == {"QP001"}
+
+
+def test_a_byte_order_mark_on_a_file_that_is_not_utf_8_is_still_reported() -> None:
+    """The mark is in the bytes even when the bytes after it are not readable."""
+    report = _check(b"\xef\xbb\xbf" + "101,2025,1,34,B,A\xe9,925190,1,1,1\n".encode("latin-1"))
+
+    assert "ADV-BOM" in _advisory_codes(report)
+    assert report.rules_evaluated == ["QP001"]
+
+
 # ---------------------------------------------------------------------------
 # Encoding and byte order marks
 # ---------------------------------------------------------------------------
