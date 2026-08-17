@@ -9,7 +9,10 @@ import pytest
 from qfer_preflight.codes import (
     COUNTY_NAMES,
     COUNTY_NUMBERS,
+    CUSTOMER_TYPES,
+    CUSTOMER_TYPES_WORKSHOP_ONLY,
     GAS_RATE_CODES,
+    PADDED_COUNTY_NUMBERS,
     RESIDENTIAL_CLASSIFICATION_CODES,
     quarter_of_month,
 )
@@ -21,6 +24,7 @@ from qfer_preflight.profiles import (
     PROFILE_1308B_S1,
     PROFILE_1308C,
     PROFILES,
+    WORKSHOP_DECK_URL,
     Profile,
     get_profile,
 )
@@ -69,6 +73,25 @@ def test_rule_ids_follow_the_stable_scheme() -> None:
         assert spec.id.startswith("QP")
         assert spec.id[2:].isdigit()
         assert len(spec.id) == 5
+
+
+def test_every_rule_cites_one_of_the_three_published_sources() -> None:
+    for spec in RULE_SPECS:
+        assert spec.cites in {"instructions", "template", "workshop"}
+
+
+def test_workshop_cited_rules_point_at_the_workshop_deck() -> None:
+    for spec in RULE_SPECS:
+        if spec.cites != "workshop":
+            continue
+        for profile in PROFILES.values():
+            if spec.applies(profile):
+                assert spec.bind(profile).citation.url == WORKSHOP_DECK_URL
+
+
+def test_the_two_customer_type_tables_do_not_overlap() -> None:
+    """A value belongs to one published source or the other, never both."""
+    assert not set(CUSTOMER_TYPES) & set(CUSTOMER_TYPES_WORKSHOP_ONLY)
 
 
 def test_no_dash_characters_in_published_quotes() -> None:
@@ -174,11 +197,110 @@ def test_naics_custom_code_is_accepted() -> None:
     assert "QP023" not in _fired(report)
 
 
-def test_county_zero_padding_gets_a_helpful_hint() -> None:
+# ---------------------------------------------------------------------------
+# County numbers, padded and otherwise
+#
+# The published county table writes 1 to 58 unpadded and only Unknown as "00".
+# A filer whose spreadsheet emits "07" is not doing something any published
+# source calls an error, so QP024 warns and QP013 stays quiet. See ADR 0003.
+# ---------------------------------------------------------------------------
+
+
+def test_a_zero_padded_county_warns_rather_than_failing() -> None:
     data = _rows(PROFILE_1306A_S1, "1,2025,1,07,B,A1,999999,1,1,1")
     report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
-    message = next(f.message for f in report.findings if f.rule_id == "QP013")
-    assert "Contra Costa" in message
+    fired = _fired(report)
+
+    assert "QP024" in fired
+    assert "QP013" not in fired, "no published source calls a padded county an error"
+    finding = next(f for f in report.findings if f.rule_id == "QP024")
+    assert finding.severity is Severity.WARNING
+    assert "Contra Costa" in finding.message
+    assert report.error_count == 0
+
+
+@pytest.mark.parametrize("padded", ["01", "02", "03", "04", "05", "06", "07", "08", "09"])
+def test_every_single_digit_county_is_recognised_when_padded(padded: str) -> None:
+    data = _rows(PROFILE_1306A_S1, f"1,2025,1,{padded},B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert "QP013" not in _fired(report)
+    assert "QP024" in _fired(report)
+
+
+def test_the_unpadded_form_warns_about_nothing() -> None:
+    data = _rows(PROFILE_1306A_S1, "1,2025,1,7,B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert report.findings == []
+
+
+def test_unknown_county_double_zero_is_published_and_silent() -> None:
+    """'00' is in the published table, so it is neither an error nor a warning."""
+    data = _rows(PROFILE_1306A_S1, "1,2025,1,00,B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert report.findings == []
+
+
+@pytest.mark.parametrize("value", ["007", "0007", "0", "077", "-24", "77"])
+def test_over_padded_and_unknown_counties_are_still_errors(value: str) -> None:
+    """Only the two-character padded form has published cover. Nothing else."""
+    data = _rows(PROFILE_1306A_S1, f"1,2025,1,{value},B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    fired = _fired(report)
+    assert "QP013" in fired
+    assert "QP024" not in fired
+
+
+def test_the_padding_table_covers_exactly_the_single_digit_counties() -> None:
+    assert sorted(PADDED_COUNTY_NUMBERS) == [f"0{n}" for n in range(1, 10)]
+    for padded, plain in PADDED_COUNTY_NUMBERS.items():
+        assert plain in COUNTY_NUMBERS
+        assert padded not in COUNTY_NUMBERS
+
+
+# ---------------------------------------------------------------------------
+# Customer Type, where two published CEC documents disagree
+# ---------------------------------------------------------------------------
+
+
+def test_customer_type_o_is_reported_for_attention_not_as_an_error() -> None:
+    data = _rows(PROFILE_1306A_S1, "1,2025,1,34,O,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    fired = _fired(report)
+
+    assert "QP025" in fired
+    assert "QP014" not in fired
+    finding = next(f for f in report.findings if f.rule_id == "QP025")
+    assert finding.severity is Severity.INFO
+    assert "BART" in finding.message
+    assert report.error_count == 0
+    assert report.warning_count == 0
+
+
+@pytest.mark.parametrize("value", ["D", "B", "C"])
+def test_the_customer_types_in_the_instructions_are_silent(value: str) -> None:
+    data = _rows(PROFILE_1306A_S1, f"1,2025,1,34,{value},A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert report.findings == []
+
+
+def test_an_unpublished_customer_type_is_still_an_error() -> None:
+    data = _rows(PROFILE_1306A_S1, "1,2025,1,34,X,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    fired = _fired(report)
+
+    assert "QP014" in fired
+    assert "QP025" not in fired
+    message = next(f.message for f in report.findings if f.rule_id == "QP014")
+    # The filer is told about every value either published source allows.
+    for allowed in ("B", "C", "D", "O"):
+        assert allowed in message
+
+
+def test_lowercase_customer_type_is_an_error() -> None:
+    """The workshop deck says "uppercase letter", so case is not forgiven."""
+    data = _rows(PROFILE_1306A_S1, "1,2025,1,34,o,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert "QP014" in _fired(report)
 
 
 def test_customer_group_is_case_sensitive() -> None:

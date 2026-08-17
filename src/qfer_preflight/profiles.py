@@ -44,6 +44,17 @@ TEMPLATE_1306B = f"{_FILES_BASE}/1306B_template.csv"
 TEMPLATE_1308B_S1 = f"{_FILES_BASE}/1308B_S1_template.csv"
 TEMPLATE_1308C = f"{_FILES_BASE}/1308C_template.csv"
 
+# The slide deck from the Commission's June 24, 2025 workshop introducing the
+# Data Submission Portal. It is a published CEC document, linked from the QFER
+# program page, and it states several submission rules that the instruction
+# PDFs do not. Where the two disagree, see ADR 0003.
+WORKSHOP_DECK_URL = (
+    "https://www.energy.ca.gov/sites/default/files/2025-06/QFER_DSP_Workshop_ada.pdf"
+)
+WORKSHOP_DECK_NAME = (
+    "CEC QFER Consumption Data Submission Portal (DSP) Workshop slides, June 24, 2025"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Profile:
@@ -91,6 +102,25 @@ class Profile:
             locator=locator,
             authority=self.authority,
         )
+
+    def workshop_citation(self, locator: str) -> Citation:
+        return Citation(
+            source=WORKSHOP_DECK_NAME,
+            url=WORKSHOP_DECK_URL,
+            locator=locator,
+            authority=self.authority,
+        )
+
+    def citation_for(self, source: str, locator: str) -> Citation:
+        """Build a citation against one of the three published sources."""
+        builders = {
+            "instructions": self.citation,
+            "template": self.template_citation,
+            "workshop": self.workshop_citation,
+        }
+        if source not in builders:  # pragma: no cover
+            raise ValueError(f"unknown citation source {source!r}")
+        return builders[source](locator)
 
     def index_of(self, column: str) -> int:
         return self.header.index(column)

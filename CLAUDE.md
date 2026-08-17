@@ -15,8 +15,12 @@ README. Never guess.
 - Validates CEC QFER Consumption CSV filings, filer-side, before submission.
 - Five profiles: `CEC-1306A-S1`, `CEC-1306A-S2`, `CEC-1306B`, `CEC-1308B-S1`,
   `CEC-1308C`.
-- `CEC-1304` is out of scope. It is filed outside the CSV portal and has no
-  published CSV template.
+- `CEC-1304` is out of scope. Its instructions say reports "can be submitted by
+  email or U.S. mail", its form is a spreadsheet, and it has no published CSV
+  template. `CEC-1306A` Schedule 3 and `CEC-1308B` Schedule 2 are out for the
+  same reason: SFTP channel, templates only on request.
+- Three published sources are cited: the instruction PDFs, the CSV templates,
+  and the June 24, 2025 DSP workshop deck. A rule picks one with `cites=`.
 
 ## Hard guardrails
 
@@ -29,6 +33,9 @@ README. Never guess.
 - Rule identifiers are permanent. Never renumber or reuse one.
 - Never let an unevaluated rule report as passed. See ADR 0001 and
   `tests/test_fail_closed.py`, which is load-bearing.
+- Never report an error at a value some published CEC document says is valid.
+  When two published documents disagree, report the disagreement at warning or
+  informational severity instead of picking a side. See ADR 0003.
 
 ## Build entrypoint
 

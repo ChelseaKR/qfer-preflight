@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-from .model import Citation, Rule, Severity
+from .model import Rule, Severity
 from .profiles import Profile
 
 # ---------------------------------------------------------------------------
@@ -81,10 +81,36 @@ _WHEN_TO_FILE_QUOTE = (
     "May, August, and November."
 )
 
-_NAICS_QUOTE = (
-    "NAICS code shall describe the primary activity at the location where the "
-    "energy is consumed. NAICS code must be exactly 6-characters in length and "
-    'match the list of "Valid NAICS codes."'
+_NAICS_QUOTE: Mapping[str, str] = {
+    "*": (
+        "NAICS code shall describe the primary activity at the location where "
+        "the energy is consumed. NAICS code must be exactly 6-characters in "
+        'length and match the list of "Valid NAICS codes."'
+    ),
+    # The CEC-1308B instructions add a sentence naming where the list lives.
+    "CEC-1308B-S1": (
+        "NAICS code shall describe the primary activity at the location where "
+        "the energy is consumed. NAICS code must be exactly 6-characters in "
+        'length and match the list of "Valid NAICS codes." See list of "Valid '
+        'NAICS codes" for identifying which NAICS codes will be accepted by '
+        "the DSP."
+    ),
+}
+
+# Formatting rule 6 from the DSP workshop deck, slide 19. This is the only
+# published statement anywhere that contemplates a County Number carrying a
+# leading zero, and it tells the filer how to keep the zero rather than calling
+# the value wrong. See ADR 0003.
+_LEADING_ZERO_QUOTE = (
+    "Any Company Number, County Number, and NAICS code values that contain a "
+    "leading 0 (zero) should be formatted as TEXT data type."
+)
+
+# Slide 9 of the same deck, listing the Customer Type values the portal
+# accepts. It carries one value, O, that the instruction PDF does not list.
+_CUSTOMER_TYPE_DSP_QUOTE = (
+    "Valid values for Customer Type (uppercase letter): B (Bundled), D (Direct "
+    "Access), C (Community Choice Aggregator), O (for BART, PGE only)"
 )
 
 
@@ -108,24 +134,16 @@ class RuleSpec:
     quote: str | Mapping[str, str] | None = None
     implemented: bool = True
     unimplemented_reason: str | None = None
-    # When true the citation points at the published CSV template rather than
-    # at the instructions PDF.
-    cite_template: bool = False
-    # Optional citation override for rules whose source is neither the
-    # instructions PDF nor the template.
-    citation_override: Citation | None = None
+    # Which published document the citation points at: the instructions PDF
+    # for the form, the published CSV template, or the DSP workshop deck.
+    cites: str = "instructions"
     tags: tuple[str, ...] = field(default_factory=tuple)
 
     def bind(self, profile: Profile) -> Rule:
         locator = _resolve(self.locator, profile.id)
         if locator is None:  # pragma: no cover
             raise ValueError(f"rule {self.id} has no locator for {profile.id}")
-        if self.citation_override is not None:
-            citation = self.citation_override
-        elif self.cite_template:
-            citation = profile.template_citation(locator)
-        else:
-            citation = profile.citation(locator)
+        citation = profile.citation_for(self.cites, locator)
         return Rule(
             id=self.id,
             title=self.title,
@@ -161,7 +179,7 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         severity=Severity.ERROR,
         locator="header row of the published CSV template",
         applies=_always,
-        cite_template=True,
+        cites="template",
         tags=("structural",),
     ),
     RuleSpec(
@@ -192,7 +210,12 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         implemented=False,
         unimplemented_reason=(
             "The instructions prohibit totals rows but publish no marker that "
-            "distinguishes a totals row from a data row. Any test would be a "
+            "distinguishes a totals row from a data row. The DSP workshop deck "
+            'repeats the prohibition ("Extra rows will not be accepted; only '
+            'include required info", slide 19) and illustrates it with a blank '
+            "row rather than a totals row, so it adds no marker either. A "
+            "totals row that carried a valid company number, year, month and "
+            "county would be indistinguishable from data. Any test would be a "
             "heuristic guess, so this rule is registered and left unevaluated "
             "rather than being approximated."
         ),
@@ -304,9 +327,17 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         implemented=False,
         unimplemented_reason=(
             'The instructions require the code to "match the list of Valid '
-            'NAICS codes" and direct the filer to see that list, but the list '
-            "itself is not published at any URL this project was able to "
-            "retrieve from energy.ca.gov. Membership is therefore not checked. "
+            'NAICS codes" and direct the filer to see that list, but the '
+            "reference resolves to nothing public. The phrase is not a "
+            "hyperlink in either instruction PDF, neither PDF carries a NAICS "
+            "appendix, and the list appears at no URL on energy.ca.gov that "
+            "this project could retrieve. The workshop deck places it in a "
+            '"data dictionary showing expected data types and lists of valid '
+            'values", to be posted on the portal app landing pages, which sit '
+            "behind authentication, or obtained by emailing Commission staff. "
+            "The list is also not simply the federal Census Bureau list, since "
+            "the Commission's own accepted set includes its RE custom codes, "
+            "which are not Census codes. Membership is therefore not checked. "
             "Length is still checked, by QP017, and the CEC custom "
             "classification codes are still checked, by QP023."
         ),
@@ -368,6 +399,29 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         applies=lambda p: p.naics_column is not None,
         tags=("field", "codeset"),
     ),
+    RuleSpec(
+        id="QP024",
+        title="County Number should be written without a leading zero, as the published table writes it",
+        severity=Severity.WARNING,
+        locator='slide 19, "Formatting Rules (3/3)", rule 6',
+        quote=_LEADING_ZERO_QUOTE,
+        applies=lambda p: p.county_column is not None,
+        cites="workshop",
+        tags=("field", "codeset"),
+    ),
+    RuleSpec(
+        id="QP025",
+        title='Customer Type "O" is published in the workshop deck but not in the instructions',
+        severity=Severity.INFO,
+        locator=(
+            'slide 9, "1306A UDC Electricity Sales/Deliveries Quarterly '
+            'Report, Schedule 1", Updated formatting/validations'
+        ),
+        quote=_CUSTOMER_TYPE_DSP_QUOTE,
+        applies=lambda p: p.customer_type_column is not None,
+        cites="workshop",
+        tags=("field", "codeset"),
+    ),
     # -----------------------------------------------------------------------
     # Cross-row rules
     # -----------------------------------------------------------------------
@@ -399,10 +453,17 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         implemented=False,
         unimplemented_reason=(
             "No published document states which combination of columns forms "
-            "the unique reporting key for a row, so the tool cannot tell a "
-            "duplicate from two legitimate rows that happen to share the "
-            "columns it can see. Choosing a key would be an invention, so this "
-            "rule is registered and left unevaluated."
+            "the unique reporting key for a row. The CEC's own worked example, "
+            "on slide 19 of the DSP workshop deck, settles it the other way: "
+            "two of its rows carry identical Company Number, Year, Month, "
+            "County Number, Customer Type, Rate Class and NAICS Code and "
+            "differ only in the reported amounts, and the slide marks only the "
+            "blank row as wrong. Legitimate repeats therefore exist, the tool "
+            "cannot tell one from a duplicate, and choosing a key would be an "
+            "invention. The only duplicate rule published anywhere applies to "
+            "whole submissions rather than rows: the portal refuses a second "
+            'submission for the same entity and period ("This entity has '
+            'already submitted for this year and period", slide 35).'
         ),
         tags=("cross-row",),
     ),

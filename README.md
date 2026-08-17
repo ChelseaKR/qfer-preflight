@@ -110,6 +110,8 @@ Implemented and grounded in published text:
 | QP021 | Company Number is present |
 | QP022 | Utility Distribution Company is PGE, SCE or SDGE |
 | QP023 | A residential `RE` code is in the published residential table |
+| QP024 | County Number is zero padded, for example `07` (warning) |
+| QP025 | Customer Type is `O`, which two published documents disagree about (info) |
 | QP030 | Months fall within one calendar quarter (warning) |
 | QP031 | Rows share one reporting year (warning) |
 
@@ -117,12 +119,70 @@ Registered but **not implemented**, and reported as unevaluated on every run:
 
 | Rule | Why it is not evaluated |
 |------|--------------------------|
-| QP005 | The instructions prohibit totals rows but publish no marker distinguishing a totals row from a data row. Any test would be a heuristic guess. |
-| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but that list is not published at any URL this project could retrieve. Length is still checked by QP017. |
-| QP032 | No published document states which columns form a row's unique reporting key, so duplicates cannot be told from legitimate repeats. |
+| QP005 | The instructions prohibit totals rows but publish no marker distinguishing a totals row from a data row. The workshop deck repeats the prohibition and illustrates it with a blank row, so it adds no marker either. Any test would be a heuristic guess. |
+| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public. See below. Length is still checked by QP017. |
+| QP032 | No published document states which columns form a row's unique reporting key, and the Commission's own worked example contains two rows that differ only in their reported amounts, so a legitimate repeat cannot be told from a duplicate. |
 
 These three are the honest half of the tool. They are visible in every report
 precisely so their absence is never mistaken for a clean result.
+
+### The missing "Valid NAICS codes" list
+
+QP018 is the one worth explaining, because the list it needs plainly exists
+somewhere. Here is where it was looked for and what turned up.
+
+- The QFER program page links nine documents: four instruction PDFs and five
+  CSV templates. None is a NAICS list, and no archived snapshot of that page
+  has ever linked one.
+- The phrase is not a hyperlink in either instruction PDF, and neither PDF
+  carries a NAICS appendix. The only six-digit codes printed anywhere in them
+  are the four CEC custom codes (`925190`, `221311`, `221312`, `999999`).
+- The sitemap was walked, and the `/media/` identifier space around the QFER
+  documents was enumerated directly, because the sitemap does not cover all of
+  it. No item's title or filename contains "NAICS".
+- Guessed filenames under `/sites/default/files/` all returned 404.
+- The portal at `datasubmission.energy.ca.gov` validates uploads in the browser
+  with a generic JSON Schema engine whose schemas, and therefore whose lists of
+  valid values, are served only after sign-in. The public asset carries no code
+  list of its own.
+- The workshop deck says where the list actually lives: a "data dictionary
+  showing expected data types and lists of valid values for fields that have
+  common errors (e.g., NAICS code, county number, customer type, UDC name,
+  etc.)", posted on the portal app landing pages, which require an account, or
+  obtained by asking Commission staff.
+
+It is also not safe to substitute the federal Census Bureau NAICS list. No CEC
+text says the phrase means that, and the Commission's own accepted set demonstrably
+includes codes Census does not publish, namely the `RE` series in the
+residential table.
+
+So QP018 stays registered and unevaluated. If you have the data dictionary from
+your portal app landing page, the list can be transcribed and the rule
+implemented; that is a transcription job, not a research one.
+
+### Where the published documents disagree with each other
+
+Two Commission documents contradict each other in two places. In both, the
+tool declines to report an error and reports the disagreement instead, because
+a validator that flags a value the Commission itself documents as valid is one
+that filers learn to ignore. ADR 0003 records the reasoning.
+
+**Zero-padded County Number, for example `07`.** The published county table
+writes counties 1 to 58 unpadded and writes only Unknown as `00`. But
+formatting rule 6 in the DSP workshop deck reads: "Any Company Number, County
+Number, and NAICS code values that contain a leading 0 (zero) should be
+formatted as TEXT data type." That tells a filer how to keep a leading zero on
+a County Number rather than calling the value wrong, and no published source
+calls the padded form an error. The Commission's own published error example
+for the field is a negative number, `-24`, while its published warning example
+is a plausible but suspect value, `14 instead of 41`. So `01` through `09` are
+a QP024 warning, not a QP013 failure. `00` is in the table and is silent.
+`007` has no published cover at all and remains an error.
+
+**Customer Type `O`.** The CEC-1306A instructions list D, B and C. Slide 9 of
+the workshop deck lists "B (Bundled), D (Direct Access), C (Community Choice
+Aggregator), O (for BART, PGE only)". `O` produces a QP025 informational note
+naming both sources, not an error.
 
 ### What is deliberately out of scope
 
@@ -130,6 +190,11 @@ precisely so their absence is never mistaken for a clean result.
 different QFER track, is filed by email or mail rather than through the CSV
 portal, and its published form is a spreadsheet with no CSV template to
 validate against. Rather than approximate it, this tool leaves it out.
+
+`CEC-1306A` Schedule 3 and `CEC-1308B` Schedule 2 are not covered either. Both
+are submitted by SFTP rather than through the portal, and the workshop deck
+directs their filers to email the Commission for the instructions and the
+template. Neither template is published, so there is nothing to transcribe.
 
 ## Sources
 
@@ -150,6 +215,12 @@ from secondary sources.
   `1306A_S1_template.csv`, `1306A_S2_template.csv`, `1306B_template.csv`,
   `1308B_S1_template.csv`, `1308C_template.csv`, all under
   <https://www.energy.ca.gov/sites/default/files/2025-07/>
+- QFER Consumption Data Submission Portal (DSP) Workshop slides, June 24, 2025:
+  <https://www.energy.ca.gov/sites/default/files/2025-06/QFER_DSP_Workshop_ada.pdf>
+  This deck states submission rules the instruction PDFs do not, and it is the
+  source for QP024 and QP025. It is a slide deck, and it predates the current
+  instructions by three weeks, so it is used only to withhold an error, never
+  to add one.
 
 Published documents change. When they do, this tool is wrong until it is
 updated. Check the rule citations against the current published instructions

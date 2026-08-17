@@ -91,6 +91,23 @@ _COUNTY_NAMES: dict[str, str] = {
 COUNTY_NAMES: Mapping[str, str] = MappingProxyType(_COUNTY_NAMES)
 COUNTY_NUMBERS: frozenset[str] = frozenset(_COUNTY_NAMES)
 
+# The two-character zero-padded spellings of the single-digit counties, "01"
+# through "09". These are the only County Number values that can carry a
+# leading zero other than "00", which the published table already lists.
+#
+# Source: the DSP workshop deck (June 24, 2025), slide 19, formatting rule 6:
+# "Any Company Number, County Number, and NAICS code values that contain a
+# leading 0 (zero) should be formatted as TEXT data type." That sentence tells
+# a filer how to preserve a leading zero on a County Number rather than
+# treating the value as wrong, so this project does not report one as an error.
+# It is still worth flagging, because the published county table writes these
+# counties unpadded and every published example does too. See ADR 0003.
+_PADDED_COUNTY_NUMBERS: dict[str, str] = {
+    f"0{n}": str(n) for n in range(1, 10) if str(n) in _COUNTY_NAMES
+}
+
+PADDED_COUNTY_NUMBERS: Mapping[str, str] = MappingProxyType(_PADDED_COUNTY_NUMBERS)
+
 # ---------------------------------------------------------------------------
 # Residential CEC Custom Classification Codes
 # ---------------------------------------------------------------------------
@@ -180,6 +197,21 @@ _CUSTOMER_TYPES: dict[str, str] = {
 }
 
 CUSTOMER_TYPES: Mapping[str, str] = MappingProxyType(_CUSTOMER_TYPES)
+
+# One further Customer Type appears in the DSP workshop deck (June 24, 2025),
+# slide 9: "Valid values for Customer Type (uppercase letter): B (Bundled),
+# D (Direct Access), C (Community Choice Aggregator), O (for BART, PGE only)".
+#
+# The instruction PDF, revised three weeks later, lists only D, B and C. Two
+# published CEC documents therefore disagree. This project does not report a
+# value as an error when a published source says it is valid, so "O" produces
+# an informational finding under QP025 rather than an error under QP014. See
+# ADR 0003.
+_CUSTOMER_TYPES_WORKSHOP_ONLY: dict[str, str] = {
+    "O": "for BART, PGE only",
+}
+
+CUSTOMER_TYPES_WORKSHOP_ONLY: Mapping[str, str] = MappingProxyType(_CUSTOMER_TYPES_WORKSHOP_ONLY)
 
 # ---------------------------------------------------------------------------
 # Customer Group

@@ -29,7 +29,9 @@ from .codes import (
     COUNTY_NAMES,
     COUNTY_NUMBERS,
     CUSTOMER_TYPES,
+    CUSTOMER_TYPES_WORKSHOP_ONLY,
     GAS_RATE_CODES,
+    PADDED_COUNTY_NUMBERS,
     RESIDENTIAL_CLASSIFICATION_CODES,
     VALID_UDC_VALUES,
     quarter_of_month,
@@ -207,6 +209,29 @@ def _check_enum_cell(
 def _check_county(collector: _Collector, column: str, value: str, row_number: int) -> None:
     if value in COUNTY_NUMBERS:
         return
+
+    # A two-character zero-padded county, "01" to "09". The published table
+    # writes these unpadded, but formatting rule 6 of the DSP workshop deck
+    # tells filers how to preserve a leading zero on a County Number rather
+    # than calling the value wrong, and no published source says it is an
+    # error. So this is a warning, not a failure. See ADR 0003.
+    unpadded = PADDED_COUNTY_NUMBERS.get(value)
+    if unpadded is not None:
+        collector.add(
+            "QP024",
+            (
+                f"{column} value {value!r} is the zero-padded form of "
+                f"{unpadded!r}, {COUNTY_NAMES[unpadded]}. The published county "
+                f"table writes it {unpadded!r}; '00' for Unknown is the only "
+                "county number the table writes with a leading zero. No "
+                "published source calls the padded form an error, so this is "
+                "reported as a warning rather than a failure."
+            ),
+            row=row_number,
+            column=column,
+        )
+        return
+
     hint = ""
     stripped = value.lstrip("0")
     if stripped in COUNTY_NUMBERS and stripped != value:
@@ -219,6 +244,45 @@ def _check_county(collector: _Collector, column: str, value: str, row_number: in
         (
             f"{column} value {value!r} is not in the published county table "
             "(1 to 58, 99 for Multi, or '00' for Unknown)." + hint
+        ),
+        row=row_number,
+        column=column,
+    )
+
+
+def _check_customer_type(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    if value in CUSTOMER_TYPES:
+        return
+
+    # The workshop deck lists a Customer Type the instruction PDF does not.
+    # Two published CEC documents disagree, so the tool declines to call the
+    # value an error and says why instead. See ADR 0003.
+    restriction = CUSTOMER_TYPES_WORKSHOP_ONLY.get(value)
+    if restriction is not None:
+        collector.add(
+            "QP025",
+            (
+                f"{column} value {value!r} is listed as valid by the DSP "
+                f"workshop deck ({restriction}) but does not appear in the "
+                "instructions, which list only "
+                f"{', '.join(sorted(CUSTOMER_TYPES))}. The two published "
+                "sources disagree, so this is reported for your attention "
+                "rather than as an error. Confirm with the Commission that it "
+                "still applies to you."
+            ),
+            row=row_number,
+            column=column,
+        )
+        return
+
+    published = sorted(set(CUSTOMER_TYPES) | set(CUSTOMER_TYPES_WORKSHOP_ONLY))
+    collector.add(
+        "QP014",
+        (
+            f"{column} value {value!r} is not a published value. Allowed: "
+            f"{', '.join(sorted(CUSTOMER_TYPES))} per the instructions, and "
+            f"{', '.join(sorted(CUSTOMER_TYPES_WORKSHOP_ONLY))} per the DSP "
+            f"workshop deck, so {', '.join(published)} in total."
         ),
         row=row_number,
         column=column,
@@ -333,8 +397,15 @@ def _check_codeset_columns(
     if profile.county_column:
         _check_county(collector, profile.county_column, cell(profile.county_column), row_number)
 
+    if profile.customer_type_column:
+        _check_customer_type(
+            collector,
+            profile.customer_type_column,
+            cell(profile.customer_type_column),
+            row_number,
+        )
+
     enum_checks: tuple[tuple[str | None, str, Iterable[str], str], ...] = (
-        (profile.customer_type_column, "QP014", CUSTOMER_TYPES, ""),
         (
             profile.customer_group_column,
             "QP015",
