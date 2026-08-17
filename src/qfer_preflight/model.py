@@ -155,13 +155,20 @@ class Rule:
 
 @dataclass(frozen=True, slots=True)
 class Finding:
-    """One observation about one document."""
+    """One observation about one document.
+
+    `cell` is the spreadsheet reference for the offending value, for example
+    "D2", so the filer can go straight to it instead of counting commas. It is
+    the CSV record number and the column position, which line up with the
+    spreadsheet unless a value contains a line break inside quotation marks.
+    """
 
     rule_id: str
     severity: Severity
     message: str
     row: int | None = None
     column: str | None = None
+    cell: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -173,6 +180,8 @@ class Finding:
             payload["row"] = self.row
         if self.column is not None:
             payload["column"] = self.column
+        if self.cell is not None:
+            payload["cell"] = self.cell
         return payload
 
 
@@ -185,6 +194,48 @@ class NotEvaluated:
 
     def to_dict(self) -> dict[str, Any]:
         return {"rule_id": self.rule_id, "reason": self.reason}
+
+
+@dataclass(frozen=True, slots=True)
+class Advisory:
+    """Something the reader noticed that no published CEC rule addresses.
+
+    Advisories are not findings and are deliberately kept in a separate list
+    with a separate code space, `ADV-...` rather than `QP...`, so that nobody
+    can mistake one for a cited rule. They exist because the alternative was
+    worse: a file whose cells begin with "=", or whose header the reader
+    silently repaired before matching it, previously produced an empty finding
+    list that read exactly like a clean file.
+
+    An advisory never carries a severity and never moves the status. It
+    records a fact about the bytes, and what the reader did about it. See
+    ADR 0004.
+    """
+
+    code: str
+    message: str
+    row: int | None = None
+    column: str | None = None
+    occurrences: int = 1
+
+    def __post_init__(self) -> None:
+        if not self.code.startswith("ADV-"):
+            raise ValueError(
+                f"advisory code {self.code!r} must start with 'ADV-' so it cannot "
+                "be mistaken for a rule identifier"
+            )
+        if not self.message.strip():
+            raise ValueError(f"advisory {self.code} must say what it noticed")
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"code": self.code, "message": self.message}
+        if self.row is not None:
+            payload["row"] = self.row
+        if self.column is not None:
+            payload["column"] = self.column
+        if self.occurrences != 1:
+            payload["occurrences"] = self.occurrences
+        return payload
 
 
 @dataclass(slots=True)
@@ -200,6 +251,7 @@ class Report:
     findings: list[Finding] = field(default_factory=list)
     rules_evaluated: list[str] = field(default_factory=list)
     rules_not_evaluated: list[NotEvaluated] = field(default_factory=list)
+    advisories: list[Advisory] = field(default_factory=list)
     rows_read: int = 0
 
     @property
@@ -215,13 +267,15 @@ class Report:
         """The verdict.
 
         A document is only `pass` when there were no errors AND every rule
-        that applied to it was actually evaluated. If anything went
-        unevaluated, the verdict is `unvalidated`. The tool does not have a
-        way to say "clean" about a document it did not fully check.
+        that applied to it was actually evaluated AND the reader raised no
+        advisory. If anything went unevaluated, or the reader had to note
+        something no published rule covers, the verdict is `unvalidated`. The
+        tool does not have a way to say "clean" about a document it did not
+        fully check.
         """
         if self.error_count:
             return Status.FAIL
-        if self.rules_not_evaluated:
+        if self.rules_not_evaluated or self.advisories:
             return Status.UNVALIDATED
         return Status.PASS
 
@@ -247,11 +301,19 @@ class Report:
                 "warning": self.warning_count,
                 "info": sum(1 for f in self.findings if f.severity is Severity.INFO),
                 "unvalidated": len(self.rules_not_evaluated),
+                "advisory": len(self.advisories),
                 "rows_read": self.rows_read,
             },
             "findings": [f.to_dict() for f in ordered],
             "rules_evaluated": sorted(self.rules_evaluated),
             "rules_not_evaluated": [
                 n.to_dict() for n in sorted(self.rules_not_evaluated, key=lambda n: n.rule_id)
+            ],
+            "advisories": [
+                a.to_dict()
+                for a in sorted(
+                    self.advisories,
+                    key=lambda a: (a.code, a.row if a.row is not None else -1, a.column or ""),
+                )
             ],
         }

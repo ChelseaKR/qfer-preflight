@@ -199,14 +199,23 @@ _CUSTOMER_TYPES: dict[str, str] = {
 CUSTOMER_TYPES: Mapping[str, str] = MappingProxyType(_CUSTOMER_TYPES)
 
 # One further Customer Type appears in the DSP workshop deck (June 24, 2025),
-# slide 9: "Valid values for Customer Type (uppercase letter): B (Bundled),
-# D (Direct Access), C (Community Choice Aggregator), O (for BART, PGE only)".
+# slide 9, under the heading "Updated formatting/validations": "Valid values
+# for Customer Type (uppercase letter): B (Bundled), D (Direct Access),
+# C (Community Choice Aggregator), O (for BART, PGE only)".
 #
-# The instruction PDF, revised three weeks later, lists only D, B and C. Two
-# published CEC documents therefore disagree. This project does not report a
-# value as an error when a published source says it is valid, so "O" produces
-# an informational finding under QP025 rather than an error under QP014. See
-# ADR 0003.
+# The instruction PDF, revised three weeks later, lists only D, B and C. This
+# project does not report a value as an error when a published source says it
+# is valid, so "O" produces an informational finding under QP025 rather than
+# an error under QP014. See ADR 0003.
+#
+# That call was re-examined against the published record and held. The July
+# 2025 revision did not withdraw "O": the previous published revision of the
+# same instructions, still live at
+# https://www.energy.ca.gov/sites/default/files/2020-08/1306A_Instructions_ada.pdf,
+# reads "4. Customer Type. D = Direct Access Customer. B = Bundled Customer."
+# and lists two values. The July revision's net change was to add C. "O" has
+# never appeared in any revision of the instructions, so no revision removed
+# it. See ADR 0005.
 _CUSTOMER_TYPES_WORKSHOP_ONLY: dict[str, str] = {
     "O": "for BART, PGE only",
 }

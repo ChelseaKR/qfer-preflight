@@ -11,6 +11,10 @@ unevaluated, never as a pass:
   * A rule that is registered but not implemented is always listed as
     unevaluated, on every run, so its absence is visible in the output rather
     than being silently absent.
+  * Anything the reader noticed but no published rule covers is recorded as an
+    advisory, in its own list with its own `ADV-` code space. An advisory is
+    never dressed up as a cited rule, and it is never silently dropped either.
+    See ADR 0004.
 
 The consequence is deliberate: a document this tool has not fully checked can
 never come back with the same verdict as one it has.
@@ -22,12 +26,13 @@ import csv
 import hashlib
 import io
 import re
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 
 from . import __version__
 from .codes import (
     COUNTY_NAMES,
     COUNTY_NUMBERS,
+    CUSTOM_CLASSIFICATION_CODES,
     CUSTOMER_TYPES,
     CUSTOMER_TYPES_WORKSHOP_ONLY,
     GAS_RATE_CODES,
@@ -36,15 +41,29 @@ from .codes import (
     VALID_UDC_VALUES,
     quarter_of_month,
 )
-from .model import Finding, NotEvaluated, Report
+from .describe import (
+    cell_note,
+    character_name,
+    column_letter,
+    formula_lead,
+    header_report,
+    hidden_characters,
+    show,
+)
+from .model import Advisory, Finding, NotEvaluated, Report
 from .profiles import Profile
 from .rules import RuleSpec, specs_for
 
 TOOL_NAME = "qfer-preflight"
 
-_FOUR_DIGIT_YEAR = re.compile(r"^\d{4}$")
-_SMALL_INT = re.compile(r"^\d{1,2}$")
-_NUMERIC_VALUE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+# Digit classes are spelled out rather than written "\d". Python's "\d" matches
+# every Unicode decimal digit, so "\d{4}" accepts the fullwidth "2025" and
+# "\d{1,2}" accepts the Arabic-Indic "5", both of which int() then happily
+# converts. That let a Year and a Month that no portal would accept pass with
+# no finding at all. See ADR 0004.
+_FOUR_DIGIT_YEAR = re.compile(r"^[0-9]{4}$")
+_SMALL_INT = re.compile(r"^[0-9]{1,2}$")
+_NUMERIC_VALUE = re.compile(r"^[+-]?[0-9]+(?:\.[0-9]+)?$")
 
 # The placeholders the instructions explicitly forbid in a numeric field.
 _FORBIDDEN_PLACEHOLDERS = {"", "NULL", "-"}
@@ -53,41 +72,75 @@ _FORBIDDEN_PLACEHOLDERS = {"", "NULL", "-"}
 # which column is which.
 _HEADER_INDEPENDENT = frozenset({"QP001", "QP002", "QP004", "QP006"})
 
+# At most this many advisories per code and column. Beyond it the reader keeps
+# counting but stops listing, so a formula in every row of a 400,000 row file
+# is one line with a count rather than 400,000 lines.
+_ADVISORY_EXAMPLES = 5
+
+_UTF8_BOM = b"\xef\xbb\xbf"
+
 
 class ValidationInputError(Exception):
     """Raised when the caller asked for something impossible."""
+
+
+class _CsvParseFailure(Exception):
+    """Raised mid-scan when the CSV reader gives up part way through a file."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
 
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _decode(data: bytes) -> str | None:
-    """Decode submission bytes, tolerating a UTF-8 byte order mark."""
+def _decode(data: bytes) -> tuple[str | None, str | None]:
+    """Decode submission bytes, tolerating a UTF-8 byte order mark.
+
+    Returns the text and, when decoding failed, a description of where it
+    failed so the filer can find the byte rather than hunt for it.
+    """
+    detail = "the bytes are not valid UTF-8"
     for encoding in ("utf-8-sig", "utf-8"):
         try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return None
+            return data.decode(encoding), None
+        except UnicodeDecodeError as exc:
+            detail = (
+                f"byte {exc.start} of the file is 0x{data[exc.start]:02X}, which is not valid UTF-8"
+            )
+    return None, detail
 
 
 def _describe_bad_characters(value: str) -> str:
     offenders = sorted({ch for ch in value if not (ch.isdigit() or ch in "+-.")})
     if not offenders:
-        return "the value is not a plain number"
-    rendered = ", ".join(repr(ch) for ch in offenders)
+        return "is not a plain number"
+    rendered = ", ".join(character_name(ch) for ch in offenders)
     return f"contains {rendered}"
+
+
+def _numeric_suggestion(value: str) -> str:
+    """The same amount rewritten the way the instructions ask for it."""
+    stripped = "".join(ch for ch in value if ch.isdigit() or ch in "+-.")
+    if not _NUMERIC_VALUE.fullmatch(stripped):
+        return ""
+    return f" Written the way the instructions ask, this value is {stripped}."
 
 
 class _Collector:
     """Accumulates findings and tracks which rules actually ran."""
 
-    def __init__(self, specs: Sequence[RuleSpec]) -> None:
+    def __init__(self, specs: Sequence[RuleSpec], profile: Profile | None = None) -> None:
         self._specs = {spec.id: spec for spec in specs}
+        self._profile = profile
         self.findings: list[Finding] = []
+        self._finding_cells: set[tuple[int, str]] = set()
         self._evaluated: set[str] = set()
         self._not_evaluated: dict[str, str] = {}
+        self._advisories: dict[tuple[str, str], Advisory] = {}
+        self._advisory_counts: dict[tuple[str, str], int] = {}
 
     def mark_evaluated(self, *rule_ids: str) -> None:
         for rule_id in rule_ids:
@@ -98,6 +151,15 @@ class _Collector:
         if rule_id in self._specs:
             self._not_evaluated[rule_id] = reason
             self._evaluated.discard(rule_id)
+
+    def _cell_reference(self, row: int | None, column: str | None) -> str | None:
+        if row is None or column is None or self._profile is None:
+            return None
+        try:
+            index = self._profile.index_of(column)
+        except ValueError:  # pragma: no cover
+            return None
+        return f"{column_letter(index)}{row}"
 
     def add(
         self,
@@ -115,8 +177,32 @@ class _Collector:
                 message=message,
                 row=row,
                 column=column,
+                cell=self._cell_reference(row, column),
             )
         )
+        if row is not None and column is not None:
+            self._finding_cells.add((row, column))
+
+    def advise(
+        self,
+        code: str,
+        message: str,
+        *,
+        row: int | None = None,
+        column: str | None = None,
+    ) -> None:
+        """Record something no published rule covers, aggregated per column."""
+        key = (code, column or "")
+        self._advisory_counts[key] = self._advisory_counts.get(key, 0) + 1
+        if self._advisory_counts[key] > _ADVISORY_EXAMPLES:
+            return
+        self._advisories[(code, f"{column or ''}#{self._advisory_counts[key]}")] = Advisory(
+            code=code, message=message, row=row, column=column
+        )
+
+    def has_finding_at(self, row: int, column: str) -> bool:
+        """Whether a cited rule has already spoken about this exact cell."""
+        return (row, column) in self._finding_cells
 
     def register_unimplemented(self) -> None:
         for spec in self._specs.values():
@@ -143,33 +229,181 @@ class _Collector:
             for rid, reason in sorted(self._not_evaluated.items())
         ]
 
+    @property
+    def advisories(self) -> list[Advisory]:
+        """Every advisory, with a tail entry wherever the listing was capped."""
+        out = list(self._advisories.values())
+        for (code, column), total in sorted(self._advisory_counts.items()):
+            if total <= _ADVISORY_EXAMPLES:
+                continue
+            where = f" in column {column}" if column else ""
+            out.append(
+                Advisory(
+                    code=code,
+                    message=(
+                        f"{total} cells{where} raised this advisory. The first "
+                        f"{_ADVISORY_EXAMPLES} are listed above; the rest are counted only."
+                    ),
+                    column=column or None,
+                    occurrences=total,
+                )
+            )
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Whole-file reading, and what the reader had to do to the bytes
+# ---------------------------------------------------------------------------
+
+
+def _line_ending_advisory(collector: _Collector, text: str) -> None:
+    """Note a file that does not settle on one ordinary line terminator.
+
+    A bare carriage return counts on its own, not only in a mixture. It is the
+    classic Mac line ending, this reader splits rows on it, and much other
+    software does not, which means the same file can hold a different number
+    of rows depending on what opens it.
+    """
+    crlf = text.count("\r\n")
+    lf = text.count("\n") - crlf
+    cr = text.count("\r") - crlf
+    kinds = {"CRLF": crlf, "LF (Unix)": lf, "CR (classic Mac)": cr}
+    present = {name: count for name, count in kinds.items() if count}
+    if len(present) < 2 and not cr:
+        return
+    listing = ", ".join(f"{count} {name}" for name, count in present.items())
+    opening = "The file mixes line endings" if len(present) > 1 else "The file ends its lines"
+    collector.advise(
+        "ADV-LINE-ENDINGS",
+        (
+            f"{opening}: {listing}. This reader accepted them and read "
+            "the rows below on that basis. Other software may split the rows "
+            "differently, and a stray carriage return inside a value breaks one "
+            "row into two. No published CEC document states which line ending "
+            "to use. Re-save the file so every line ends the same way, with "
+            "either CRLF or LF."
+        ),
+    )
+
+
+def _bom_advisory(collector: _Collector, data: bytes) -> None:
+    if not data.startswith(_UTF8_BOM):
+        return
+    collector.advise(
+        "ADV-BOM",
+        (
+            "The file begins with a UTF-8 byte order mark, the bytes EF BB BF. "
+            "This reader removed it before matching the header, so the header "
+            "check below ignored it. Software that does not remove it reads "
+            "the first column name with an invisible character in front and "
+            "will not match the template. If the header is rejected after this "
+            "tool accepted it, re-save the file without the byte order mark."
+        ),
+    )
+
+
+def _unterminated_quote(text: str) -> bool:
+    """True when the file ends inside a quoted field, which means it is cut off.
+
+    Python's CSV reader does not complain about this. It reaches the end of the
+    input, hands back whatever it had accumulated, and the caller cannot tell a
+    complete file from one that was truncated mid-value. This walks the text
+    the way the reader does, tracking whether a quotation mark opened a field,
+    and reports whether one was ever closed.
+    """
+    at_field_start = True
+    in_quotes = False
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if in_quotes:
+            if char == '"':
+                if index + 1 < length and text[index + 1] == '"':
+                    index += 2
+                    continue
+                in_quotes = False
+                at_field_start = False
+            index += 1
+            continue
+        if at_field_start and char == '"':
+            in_quotes = True
+            at_field_start = False
+        else:
+            at_field_start = char in ",\r\n"
+        index += 1
+    return in_quotes
+
+
+def _formula_advisory(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    lead = formula_lead(value)
+    if lead is None:
+        return
+    collector.advise(
+        "ADV-FORMULA-CELL",
+        (
+            f"{column} on row {row_number} begins with {character_name(lead)}. "
+            "Spreadsheet software reads a cell starting with that character as "
+            "a formula and tries to evaluate it rather than storing the text, "
+            "so the value that reaches the reviewer may not be the value you "
+            "entered. No published CEC document addresses this. If the value "
+            "is meant literally, remove the leading character."
+        ),
+        row=row_number,
+        column=column,
+    )
+
+
+def _hidden_character_advisory(
+    collector: _Collector, column: str, value: str, row_number: int
+) -> None:
+    """Flag an invisible character in a cell no cited rule has already judged.
+
+    When a rule did fire on the same cell, its own message already names the
+    character, so repeating it here would be noise and would also be untrue:
+    the advisory says no published rule covers the value, and one just did.
+    """
+    if collector.has_finding_at(row_number, column):
+        return
+    hidden = [ch for ch in hidden_characters(value) if ch != " "]
+    if not hidden:
+        return
+    names = ", ".join(character_name(ch) for ch in hidden)
+    collector.advise(
+        "ADV-HIDDEN-CHARACTER",
+        (
+            f"{column} on row {row_number} contains {names}, which a "
+            "spreadsheet does not show. No published rule this tool implements "
+            "constrains the contents of this column, so the value is reported "
+            f"here rather than as a finding. The cell reads {show(value)}. "
+            "Retype it if the character was not intended."
+        ),
+        row=row_number,
+        column=column,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rule checks
+# ---------------------------------------------------------------------------
+
 
 def _check_header(collector: _Collector, profile: Profile, header: Sequence[str]) -> bool:
     collector.mark_evaluated("QP002")
-    actual = tuple(header)
-    if actual == profile.header:
+    if tuple(header) == profile.header:
         return True
-    expected_line = ",".join(profile.header)
-    actual_line = ",".join(actual)
-    collector.add(
-        "QP002",
-        (
-            "Header row does not match the published template. "
-            f"Expected: {expected_line}. Found: {actual_line}."
-        ),
-        row=1,
-    )
+    collector.add("QP002", header_report(profile.header, list(header)), row=1)
     return False
 
 
 def _check_numeric_cell(collector: _Collector, column: str, value: str, row_number: int) -> None:
     if value.strip().upper() in _FORBIDDEN_PLACEHOLDERS:
-        shown = "an empty cell" if not value.strip() else repr(value.strip())
         collector.add(
             "QP019",
             (
-                f"{column} holds {shown}. A zero must be written as 0 rather "
-                'than left blank or filled with "NULL" or "-".'
+                f"{column} holds {show(value)}. Write a zero as 0. The "
+                'instructions do not accept a blank cell, "NULL" or "-" in '
+                "this column."
             ),
             row=row_number,
             column=column,
@@ -179,13 +413,21 @@ def _check_numeric_cell(collector: _Collector, column: str, value: str, row_numb
         collector.add(
             "QP020",
             (
-                f"{column} value {value!r} {_describe_bad_characters(value)}. "
-                "Numeric fields must not carry letters, spaces, comma "
-                "separators or dollar signs."
+                f"{column} value {show(value)} {_describe_bad_characters(value)}. "
+                "A numeric field takes digits only, with an optional leading "
+                "minus sign and an optional decimal point. Remove any letters, "
+                "spaces, comma separators and dollar signs."
+                f"{_numeric_suggestion(value)}{cell_note(value)}"
             ),
             row=row_number,
             column=column,
         )
+
+
+def _near_matches(value: str, allowed: Iterable[str]) -> list[str]:
+    """Published values that differ from this one only in case or whitespace."""
+    folded = value.strip().casefold()
+    return sorted(candidate for candidate in allowed if candidate.casefold() == folded)
 
 
 def _check_enum_cell(
@@ -202,8 +444,11 @@ def _check_enum_cell(
     if value in allowed_set:
         return
     listing = ", ".join(sorted(allowed_set))
-    message = f"{column} value {value!r} is not a published value. Allowed: {listing}."
-    collector.add(rule_id, message + note, row=row_number, column=column)
+    message = f"{column} value {show(value)} is not a published value. Allowed: {listing}."
+    near = _near_matches(value, allowed_set)
+    if near:
+        message += f" The published spelling is {', '.join(repr(n) for n in near)}."
+    collector.add(rule_id, message + note + cell_note(value), row=row_number, column=column)
 
 
 def _check_county(collector: _Collector, column: str, value: str, row_number: int) -> None:
@@ -220,34 +465,44 @@ def _check_county(collector: _Collector, column: str, value: str, row_number: in
         collector.add(
             "QP024",
             (
-                f"{column} value {value!r} is the zero-padded form of "
+                f"{column} value {show(value)} is the zero-padded form of "
                 f"{unpadded!r}, {COUNTY_NAMES[unpadded]}. The published county "
                 f"table writes it {unpadded!r}; '00' for Unknown is the only "
                 "county number the table writes with a leading zero. No "
                 "published source calls the padded form an error, so this is "
-                "reported as a warning rather than a failure."
+                "reported as a warning rather than a failure. To match the "
+                f"published table, write it as {unpadded!r}."
             ),
             row=row_number,
             column=column,
         )
         return
 
-    hint = ""
-    stripped = value.lstrip("0")
-    if stripped in COUNTY_NUMBERS and stripped != value:
-        hint = (
-            f" The published table writes {COUNTY_NAMES[stripped]} as "
-            f"{stripped!r}; only Unknown is written '00'."
-        )
     collector.add(
         "QP013",
         (
-            f"{column} value {value!r} is not in the published county table "
-            "(1 to 58, 99 for Multi, or '00' for Unknown)." + hint
+            f"{column} value {show(value)} is not in the published county "
+            "table. Use the county number where the customer consumed the "
+            "energy: 1 to 58 for a California county, 99 for Multi, or '00' "
+            f"for Unknown.{_county_hint(value)}{cell_note(value)}"
         ),
         row=row_number,
         column=column,
     )
+
+
+def _county_hint(value: str) -> str:
+    stripped = value.strip().lstrip("0")
+    if stripped in COUNTY_NUMBERS and stripped != value:
+        return (
+            f" The published table writes {COUNTY_NAMES[stripped]} as "
+            f"{stripped!r}; only Unknown is written '00'."
+        )
+    if value.strip().isdigit() and value.strip().isascii():
+        number = int(value.strip())
+        if number > 58 and number != 99:
+            return f" There is no county {number}; the table stops at 58."
+    return ""
 
 
 def _check_customer_type(collector: _Collector, column: str, value: str, row_number: int) -> None:
@@ -262,31 +517,50 @@ def _check_customer_type(collector: _Collector, column: str, value: str, row_num
         collector.add(
             "QP025",
             (
-                f"{column} value {value!r} is listed as valid by the DSP "
+                f"{column} value {show(value)} is listed as valid by the DSP "
                 f"workshop deck ({restriction}) but does not appear in the "
                 "instructions, which list only "
-                f"{', '.join(sorted(CUSTOMER_TYPES))}. The two published "
-                "sources disagree, so this is reported for your attention "
-                "rather than as an error. Confirm with the Commission that it "
-                "still applies to you."
+                f"{', '.join(sorted(CUSTOMER_TYPES))}. No revision of the "
+                "instructions has ever listed it, and no published document "
+                "says it is not accepted, so this is reported for your "
+                "attention rather than as an error. Nothing needs changing on "
+                "the strength of this note. If you are not filing for BART, "
+                f"one of {', '.join(sorted(CUSTOMER_TYPES))} is the value you "
+                "want; if you are, confirm with the Commission that the code "
+                "still applies before you submit."
             ),
             row=row_number,
             column=column,
         )
         return
 
-    published = sorted(set(CUSTOMER_TYPES) | set(CUSTOMER_TYPES_WORKSHOP_ONLY))
+    legend = "; ".join(f"{code} = {name}" for code, name in sorted(CUSTOMER_TYPES.items()))
     collector.add(
         "QP014",
         (
-            f"{column} value {value!r} is not a published value. Allowed: "
-            f"{', '.join(sorted(CUSTOMER_TYPES))} per the instructions, and "
-            f"{', '.join(sorted(CUSTOMER_TYPES_WORKSHOP_ONLY))} per the DSP "
-            f"workshop deck, so {', '.join(published)} in total."
+            f"{column} value {show(value)} is not a published value. Use one "
+            f"uppercase letter: {legend}. The DSP workshop deck adds "
+            f"{', '.join(sorted(CUSTOMER_TYPES_WORKSHOP_ONLY))} "
+            f"({', '.join(CUSTOMER_TYPES_WORKSHOP_ONLY.values())}), which the "
+            f"instructions do not list.{cell_note(value)}"
         ),
         row=row_number,
         column=column,
     )
+
+
+def _naics_hint(value: str) -> str:
+    """Point at the published codes nearest to what was typed."""
+    if not value.strip().upper().startswith("RE"):
+        return ""
+    prefix = value.strip().upper()[:4]
+    near = sorted(code for code in RESIDENTIAL_CLASSIFICATION_CODES if code.startswith(prefix))
+    if not near:
+        opening = sorted(RESIDENTIAL_CLASSIFICATION_CODES)[:3]
+        return f" The published table starts {', '.join(opening)} and so on."
+    listing = ", ".join(f"{code} ({RESIDENTIAL_CLASSIFICATION_CODES[code]})" for code in near[:3])
+    label = "code is" if len(near[:3]) == 1 else "codes are"
+    return f" The nearest published {label} {listing}."
 
 
 def _check_naics(collector: _Collector, column: str, value: str, row_number: int) -> None:
@@ -294,19 +568,27 @@ def _check_naics(collector: _Collector, column: str, value: str, row_number: int
         collector.add(
             "QP017",
             (
-                f"{column} value {value!r} is {len(value)} characters long. "
-                "The code must be exactly 6 characters."
+                f"{column} value {show(value)} is {len(value)} characters long. "
+                "The code must be exactly 6 characters and should describe the "
+                "primary activity at the location where the energy was "
+                "consumed. This tool checks the length only; whether the code "
+                "is on the Commission's list of valid NAICS codes is reported "
+                f"as not evaluated under QP018.{cell_note(value)}"
             ),
             row=row_number,
             column=column,
         )
     if value.strip().upper().startswith("RE") and value not in RESIDENTIAL_CLASSIFICATION_CODES:
+        custom = ", ".join(f"{code} ({name})" for code, name in CUSTOM_CLASSIFICATION_CODES.items())
         collector.add(
             "QP023",
             (
-                f"{column} value {value!r} looks like a residential "
+                f"{column} value {show(value)} looks like a residential "
                 "classification code but is not in the published "
-                '"Residential CEC Custom Classification Codes" table.'
+                '"Residential CEC Custom Classification Codes" table. Use a '
+                "code from that table for a residential customer, or one of "
+                f"the other CEC custom codes: {custom}."
+                f"{_naics_hint(value)}{cell_note(value)}"
             ),
             row=row_number,
             column=column,
@@ -321,23 +603,48 @@ def _check_integer_range(
     low: int,
     high: int,
     row_number: int,
+    example: str,
 ) -> int | None:
-    if not _SMALL_INT.fullmatch(value) or not low <= int(value) <= high:
+    if _SMALL_INT.fullmatch(value):
+        number = int(value)
+        if low <= number <= high:
+            return number
+        # A whole number, just not one of the published ones. Saying it "is not
+        # a whole number" here would send the filer looking for a typo that is
+        # not there.
+        allowed = ", ".join(str(n) for n in range(low, high + 1))
         collector.add(
             rule_id,
-            f"{column} value {value!r} is not a whole number from {low} to {high}.",
+            (
+                f"{column} value {show(value)} is outside the published range. "
+                f"The only values are {allowed}, for example {example}."
+            ),
             row=row_number,
             column=column,
         )
         return None
-    return int(value)
+    collector.add(
+        rule_id,
+        (
+            f"{column} value {show(value)} is not a whole number from {low} to "
+            f"{high}. Write it as a plain number with no leading zero and no "
+            f"other characters, for example {example}.{cell_note(value)}"
+        ),
+        row=row_number,
+        column=column,
+    )
+    return None
 
 
 def _check_year(collector: _Collector, column: str, value: str, row_number: int) -> str | None:
     if not _FOUR_DIGIT_YEAR.fullmatch(value):
         collector.add(
             "QP010",
-            f"{column} value {value!r} is not a four-digit year.",
+            (
+                f"{column} value {show(value)} is not a four-digit year. Write "
+                "the calendar year as four digits, for example 2025."
+                f"{cell_note(value)}"
+            ),
             row=row_number,
             column=column,
         )
@@ -355,7 +662,15 @@ def _check_identity_columns(
     """Company number, year, month and quarter."""
     column = profile.company_number_column
     if column and not cell(column).strip():
-        collector.add("QP021", f"{column} is empty.", row=row_number, column=column)
+        collector.add(
+            "QP021",
+            (
+                f"{column} is {show(cell(column))}. Every row needs the "
+                "identification number CEC staff assigned to your company."
+            ),
+            row=row_number,
+            column=column,
+        )
 
     if profile.year_column:
         year = _check_year(collector, profile.year_column, cell(profile.year_column), row_number)
@@ -371,6 +686,7 @@ def _check_identity_columns(
             1,
             12,
             row_number,
+            example="3 for March",
         )
         if month is not None:
             seen["months"].add(str(month))
@@ -384,6 +700,7 @@ def _check_identity_columns(
             1,
             4,
             row_number,
+            example="2 for April to June",
         )
 
 
@@ -410,10 +727,15 @@ def _check_codeset_columns(
             profile.customer_group_column,
             "QP015",
             profile.customer_group_values,
-            " The value must be spelled and capitalised exactly as published.",
+            " Enter it spelled and capitalised exactly as published.",
         ),
-        (profile.udc_column, "QP022", VALID_UDC_VALUES, ""),
-        (profile.rate_code_column, "QP016", GAS_RATE_CODES, ""),
+        (
+            profile.udc_column,
+            "QP022",
+            VALID_UDC_VALUES,
+            " Enter the UDC exactly as spelled here, with no special characters such as '&'.",
+        ),
+        (profile.rate_code_column, "QP016", GAS_RATE_CODES, _rate_code_legend()),
     )
     for column, rule_id, allowed, note in enum_checks:
         if column:
@@ -423,6 +745,43 @@ def _check_codeset_columns(
 
     if profile.naics_column:
         _check_naics(collector, profile.naics_column, cell(profile.naics_column), row_number)
+
+
+def _rate_code_legend() -> str:
+    listing = "; ".join(f"{code} = {name}" for code, name in sorted(GAS_RATE_CODES.items()))
+    return f" The published codes describe the type of gas delivery: {listing}."
+
+
+def _repeated_header_advisory(
+    collector: _Collector, profile: Profile, row: Sequence[str], row_number: int
+) -> None:
+    if tuple(row) != profile.header:
+        return
+    collector.advise(
+        "ADV-REPEATED-HEADER",
+        (
+            f"Row {row_number} is an exact copy of the header row. The findings "
+            "above treat it as data, which is why they complain that a Year "
+            "reads 'Year'. Deleting this one row clears all of them. It most "
+            "often appears when several quarters were pasted into one file."
+        ),
+        row=row_number,
+    )
+
+
+def _row_advisories(
+    collector: _Collector, profile: Profile, row: Sequence[str], row_number: int
+) -> None:
+    """Record what no published rule covers, so a quiet row is not a clean one."""
+    _repeated_header_advisory(collector, profile, row, row_number)
+    for index, column in enumerate(profile.header):
+        value = row[index]
+        # Almost every cell in a real filing is plain printable ASCII. Skipping
+        # those without building a set per cell keeps a 400,000 row file quick.
+        if value.isascii() and value.isprintable() and value[:1] not in "=@+-":
+            continue
+        _formula_advisory(collector, column, value, row_number)
+        _hidden_character_advisory(collector, column, value, row_number)
 
 
 def _row_checks(
@@ -441,20 +800,26 @@ def _row_checks(
     _check_codeset_columns(collector, profile, cell, row_number)
     for column in profile.numeric_columns:
         _check_numeric_cell(collector, column, cell(column), row_number)
+    _row_advisories(collector, profile, row, row_number)
 
 
 def _cross_row_checks(collector: _Collector, seen: dict[str, set[str]]) -> None:
     months = {int(m) for m in seen["months"]}
     if months:
-        quarters = {quarter_of_month(m) for m in months}
+        quarters = sorted({quarter_of_month(m) for m in months})
         if len(quarters) > 1:
+            grouped = "; ".join(
+                f"quarter {q} holds month "
+                + ", ".join(str(m) for m in sorted(months) if quarter_of_month(m) == q)
+                for q in quarters
+            )
             collector.add(
                 "QP030",
                 (
                     "Months in this submission span more than one calendar "
-                    f"quarter (months {sorted(months)}, quarters "
-                    f"{sorted(quarters)}). A quarterly report covers the three "
-                    "months of a single quarter."
+                    f"quarter: {grouped}. A quarterly report covers the three "
+                    "months of a single quarter, so split these rows into one "
+                    "file per quarter and submit them separately."
                 ),
             )
     years = seen["years"]
@@ -463,7 +828,9 @@ def _cross_row_checks(collector: _Collector, seen: dict[str, set[str]]) -> None:
             "QP031",
             (
                 "Rows in this submission carry more than one reporting year "
-                f"({', '.join(sorted(years))})."
+                f"({', '.join(sorted(years))}). A report covers one quarter of "
+                "one year, so split these rows by year and submit each "
+                "reporting period separately."
             ),
         )
 
@@ -472,29 +839,43 @@ def _column_dependent_rule_ids(specs: Sequence[RuleSpec]) -> list[str]:
     return [spec.id for spec in specs if spec.implemented and spec.id not in _HEADER_INDEPENDENT]
 
 
-def _parse_rows(text: str) -> list[list[str]] | None:
+def _reader(text: str) -> Iterator[list[str]]:
+    return iter(csv.reader(io.StringIO(text, newline="")))
+
+
+def _next_row(rows: Iterator[list[str]]) -> list[str] | None:
     try:
-        return list(csv.reader(io.StringIO(text, newline="")))
-    except csv.Error:
+        return next(rows)
+    except StopIteration:
         return None
+    except csv.Error as exc:
+        raise _CsvParseFailure(str(exc)) from exc
 
 
 def _scan_rows(
     collector: _Collector,
     profile: Profile,
-    rows: Sequence[Sequence[str]],
+    rows: Iterator[list[str]],
     header_ok: bool,
 ) -> int:
     """Walk the data rows. Returns the number of non-blank data rows seen."""
     expected_width = len(profile.header)
     seen: dict[str, set[str]] = {"months": set(), "years": set()}
     data_rows = 0
+    offset = 1
 
-    for offset, row in enumerate(rows[1:], start=2):
+    while True:
+        row = _next_row(rows)
+        if row is None:
+            break
+        offset += 1
         if not any(cell.strip() for cell in row):
             collector.add(
                 "QP004",
-                "Row is blank. Blank rows must be excluded from the submission.",
+                (
+                    "Row is blank. The instructions exclude blank rows from a "
+                    "submission, so delete this row."
+                ),
                 row=offset,
             )
             continue
@@ -502,11 +883,7 @@ def _scan_rows(
         if not header_ok:
             continue
         if len(row) != expected_width:
-            collector.add(
-                "QP003",
-                (f"Row has {len(row)} fields but the template defines {expected_width}."),
-                row=offset,
-            )
+            collector.add("QP003", _width_message(profile, row, expected_width), row=offset)
             continue
         _row_checks(collector, profile, row, offset, seen)
 
@@ -515,10 +892,49 @@ def _scan_rows(
     return data_rows
 
 
+def _width_message(profile: Profile, row: Sequence[str], expected_width: int) -> str:
+    message = (
+        f"Row has {len(row)} fields but the template defines {expected_width}. "
+        f"Every row needs exactly {expected_width} comma-separated values, in "
+        "the template's order."
+    )
+    if len(row) > expected_width:
+        return message + (
+            " A comma inside a value splits it into two fields unless the "
+            'value is wrapped in double quotation marks, so "Smith, J" counts '
+            "as one field and Smith, J counts as two."
+        )
+    missing = list(profile.header[len(row) :])
+    if missing:
+        message += " Counting from the left, the row stops before " + ", ".join(missing) + "."
+    return message
+
+
+def _blocked(collector: _Collector, detail: str, reason: str) -> None:
+    collector.add("QP001", detail)
+    collector.block_all_except(["QP001"], reason)
+
+
+def _empty_detail(data: bytes, text: str) -> str:
+    """Say which kind of nothing the file holds, since they are not the same."""
+    if data.startswith(_UTF8_BOM) and not data[len(_UTF8_BOM) :].strip():
+        tail = "and whitespace" if data[len(_UTF8_BOM) :] else ""
+        return (
+            f"The file holds nothing but a UTF-8 byte order mark {tail}, the "
+            "bytes EF BB BF. There is no header row and no data."
+        ).replace("  ", " ")
+    if not data:
+        return "The file is empty, with no bytes in it at all."
+    return (
+        f"The file holds {len(data)} bytes of whitespace and nothing else. "
+        "There is no header row and no data."
+    )
+
+
 def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
     """Validate one submission held in memory."""
     specs = specs_for(profile)
-    collector = _Collector(specs)
+    collector = _Collector(specs, profile)
     collector.register_unimplemented()
 
     report = Report(
@@ -531,26 +947,71 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
     )
 
     collector.mark_evaluated("QP001")
-    text = _decode(data)
-    if text is None or not text.strip():
-        detail = "The file is empty." if text is not None else "The file is not valid UTF-8 text."
-        collector.add("QP001", f"{detail} Nothing in it could be validated.")
-        collector.block_all_except(
-            ["QP001"],
+    text, decode_error = _decode(data)
+    if text is None:
+        _blocked(
+            collector,
+            (
+                f"The file is not valid UTF-8 text: {decode_error}. This tool "
+                "reads UTF-8, so it could not open the file and validated "
+                "nothing in it. Re-save the file as UTF-8 and run it again."
+            ),
             "The submission could not be read, so this rule was never applied.",
         )
         return _finish(report, collector, 0)
 
-    rows = _parse_rows(text)
-    if rows is None or not rows:
-        collector.add("QP001", "The file could not be parsed as CSV.")
-        collector.block_all_except(
-            ["QP001"],
+    if not text.strip():
+        _blocked(
+            collector,
+            f"{_empty_detail(data, text)} Nothing in it could be validated.",
+            "The submission could not be read, so this rule was never applied.",
+        )
+        return _finish(report, collector, 0)
+
+    _bom_advisory(collector, data)
+    _line_ending_advisory(collector, text)
+
+    if _unterminated_quote(text):
+        _blocked(
+            collector,
+            (
+                "The file ends in the middle of a quoted value: a double "
+                "quotation mark opens a field that is never closed before the "
+                "end of the file. That means the file was cut off, most often "
+                "by an interrupted export or a partial copy. Every value after "
+                "the opening quotation mark is unreliable, so no other rule "
+                "was applied. Re-export the file and check that it ends with a "
+                "complete final row."
+            ),
+            "The submission was cut off mid-value, so this rule was never applied.",
+        )
+        return _finish(report, collector, 0)
+
+    return _read_and_scan(report, collector, specs, profile, text)
+
+
+def _read_and_scan(
+    report: Report,
+    collector: _Collector,
+    specs: Sequence[RuleSpec],
+    profile: Profile,
+    text: str,
+) -> Report:
+    rows = _reader(text)
+    try:
+        header = _next_row(rows)
+    except _CsvParseFailure as failure:
+        return _parse_failure(report, specs, profile, failure.detail)
+
+    if header is None:
+        _blocked(
+            collector,
+            "The file could not be parsed as CSV.",
             "The submission could not be parsed, so this rule was never applied.",
         )
         return _finish(report, collector, 0)
 
-    header_ok = _check_header(collector, profile, rows[0])
+    header_ok = _check_header(collector, profile, header)
     if not header_ok:
         collector.block_all_except(
             _HEADER_INDEPENDENT,
@@ -564,7 +1025,11 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
         collector.mark_evaluated(*_column_dependent_rule_ids(specs))
 
     collector.mark_evaluated("QP003", "QP004", "QP006")
-    data_rows = _scan_rows(collector, profile, rows, header_ok)
+    try:
+        data_rows = _scan_rows(collector, profile, rows, header_ok)
+    except _CsvParseFailure as failure:
+        return _parse_failure(report, specs, profile, failure.detail)
+
     if not header_ok:
         collector.mark_not_evaluated(
             "QP003",
@@ -577,16 +1042,47 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
     if data_rows == 0:
         collector.add(
             "QP006",
-            "The file contains a header but no data rows, so nothing was validated.",
+            (
+                "The file contains a header but no data rows, so nothing was "
+                "validated. A submission reports monthly data for the previous "
+                "quarter, so add one row per reporting combination beneath the "
+                "header before submitting."
+            ),
         )
 
     return _finish(report, collector, data_rows)
+
+
+def _parse_failure(
+    report: Report, specs: Sequence[RuleSpec], profile: Profile, detail: str
+) -> Report:
+    """Throw away every finding gathered before the reader gave up.
+
+    A file that stops parsing part way through has not been checked, not even
+    the part that parsed, because the reader cannot know what the rest of it
+    would have said. Reporting the findings from the readable prefix alongside
+    a parse error would invite reading the prefix as validated. It was not.
+    """
+    fresh = _Collector(specs, profile)
+    fresh.register_unimplemented()
+    fresh.mark_evaluated("QP001")
+    _blocked(
+        fresh,
+        (
+            f"The file could not be parsed as CSV: {detail}. No rule was "
+            "applied to any part of it, including the rows before the point "
+            "where parsing stopped."
+        ),
+        "The submission could not be parsed, so this rule was never applied.",
+    )
+    return _finish(report, fresh, 0)
 
 
 def _finish(report: Report, collector: _Collector, rows_read: int) -> Report:
     report.findings = collector.findings
     report.rules_evaluated = collector.evaluated
     report.rules_not_evaluated = collector.not_evaluated
+    report.advisories = collector.advisories
     report.rows_read = rows_read
     return report
 

@@ -27,11 +27,13 @@ def to_json(report: Report) -> str:
     return json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
-def _location(row: int | None, column: str | None) -> str:
+def _location(row: int | None, column: str | None, cell: str | None = None) -> str:
     if row is None:
         return "file"
     if column is None:
         return f"row {row}"
+    if cell:
+        return f"cell {cell} (row {row}, {column})"
     return f"row {row}, {column}"
 
 
@@ -58,11 +60,23 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
         lines.append(f"Findings ({len(ordered)}):")
         for finding in ordered:
             label = _SEVERITY_LABEL[finding.severity]
-            where = _location(finding.row, finding.column)
+            where = _location(finding.row, finding.column, finding.cell)
             lines.append(f"  [{label}] {finding.rule_id}  {where}: {finding.message}")
         lines.append("")
     else:
         lines.append("Findings: none")
+        lines.append("")
+
+    if report.advisories:
+        lines.append(f"Advisories ({len(report.advisories)}):")
+        lines.append(
+            "  These are not CEC rules and no published document calls them "
+            "wrong. They are things the reader noticed, or had to do to the "
+            "bytes, that a report with no findings would otherwise hide."
+        )
+        for advisory in report.advisories:
+            where = _location(advisory.row, advisory.column)
+            lines.append(f"  [ADVIS] {advisory.code}  {where}: {advisory.message}")
         lines.append("")
 
     if report.rules_not_evaluated:
@@ -74,11 +88,18 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
     lines.append(
         f"Rules evaluated: {len(report.rules_evaluated)}"
         f" | not evaluated: {len(report.rules_not_evaluated)}"
+        f" | advisories: {len(report.advisories)}"
     )
     if report.status.value == "unvalidated":
+        reasons = []
+        if report.rules_not_evaluated:
+            reasons.append("one or more rules were never applied")
+        if report.advisories:
+            reasons.append("the reader raised an advisory no published rule covers")
         lines.append(
-            "This submission is NOT reported as clean. One or more rules were "
-            "never applied, so parts of it are simply unchecked."
+            "This submission is NOT reported as clean: "
+            + " and ".join(reasons)
+            + ", so parts of it are simply unchecked."
         )
     return "\n".join(lines) + "\n"
 

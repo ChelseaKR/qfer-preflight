@@ -2,8 +2,9 @@
 
 Exit codes:
   0  no error-level findings
-  1  at least one error-level finding, or, with --strict, at least one rule
-     that was not evaluated
+  1  at least one error-level finding, or, with --strict, anything the tool
+     could not reach a verdict on: a rule that was not evaluated, or an
+     advisory the reader raised
   2  the tool was asked for something it could not do
 """
 
@@ -57,7 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--strict",
         action="store_true",
-        help="also exit non-zero when any rule could not be evaluated",
+        help=(
+            "also exit non-zero when any rule could not be evaluated or the "
+            "reader raised an advisory"
+        ),
     )
 
     rules = sub.add_parser("rules", help="list the rule registry with citations")

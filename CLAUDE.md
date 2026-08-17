@@ -35,7 +35,17 @@ README. Never guess.
   `tests/test_fail_closed.py`, which is load-bearing.
 - Never report an error at a value some published CEC document says is valid.
   When two published documents disagree, report the disagreement at warning or
-  informational severity instead of picking a side. See ADR 0003.
+  informational severity instead of picking a side. See ADR 0003 and ADR 0005.
+- Never let a report be silent about something the reader noticed. Anything no
+  published rule covers goes in the advisory channel, with an `ADV-` code, no
+  severity and no citation, and it keeps the verdict off `pass`. Advisories are
+  not a back door for checks that could not survive as rules: an advisory
+  cannot carry a severity or a citation, and must say in its own text that no
+  published rule covers it. See ADR 0004 and
+  `tests/test_adversarial_input.py`, also load-bearing.
+- Write digit classes as `[0-9]`, never `\d`. Python's `\d` matches every
+  Unicode decimal digit and `int()` converts them, which once let a fullwidth
+  Month through with no finding.
 
 ## Build entrypoint
 
@@ -53,7 +63,9 @@ tests with the coverage floor, and the dash check.
 - `src/qfer_preflight/profiles.py` form templates and exact header rows
 - `src/qfer_preflight/rules.py` the rule registry with citations and quotes
 - `src/qfer_preflight/engine.py` execution and the fail-closed gating
-- `src/qfer_preflight/model.py` citation, rule, finding and report types
+- `src/qfer_preflight/describe.py` rendering values and header rows in words,
+  so a message names what the eye cannot see. It decides nothing.
+- `src/qfer_preflight/model.py` citation, rule, finding, advisory and report types
 - `docs/adr/` decisions, including the fail-closed contract
 
 ## Transcription convention

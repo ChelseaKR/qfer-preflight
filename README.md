@@ -30,7 +30,8 @@ uv run qfer-preflight rules --profile CEC-1306A-S1
 ```
 
 Exit codes: `0` no error-level findings, `1` at least one error-level finding
-(or, with `--strict`, anything left unevaluated), `2` bad invocation.
+(or, with `--strict`, anything left unevaluated or any advisory raised), `2`
+bad invocation.
 
 ## What it will not do
 
@@ -65,6 +66,39 @@ That is deliberate. The tool has no vocabulary for "clean" while any rule
 remains unapplied. `tests/test_fail_closed.py` hashes the report for a clean
 file, an empty file, and a malformed file, and asserts all three digests
 differ.
+
+### Advisories, and why they exist
+
+`Findings: none` is what a filer reads, whatever the status line above it
+says. So the promise above was attacked with twenty six deliberately hostile
+files, and four of them came back with an empty finding list: a file truncated
+inside a quoted value, a Month written with a fullwidth digit, a cell
+beginning `=`, and a file whose byte order mark the reader had quietly
+stripped before matching the header.
+
+The first two were defects and are fixed. The other two are the harder case:
+the reader noticed something real and had nothing to say about it, because a
+finding needs a citation and no published CEC text covers a leading `=` in a
+`RateClass` or a byte order mark in a header. Those now produce **advisories**,
+listed separately, with codes beginning `ADV-` rather than `QP`. An advisory
+carries no severity, cites no CEC document, states in its own text that no
+published rule covers it, and keeps the verdict away from `pass`. It is not a
+rule and cannot be turned into one by accident: the model rejects any advisory
+code that does not begin `ADV-`, and an advisory cannot be rendered as a
+finding.
+
+| Advisory | Raised when |
+|----------|-------------|
+| `ADV-BOM` | The file starts with a UTF-8 byte order mark, which the reader removed before matching the header |
+| `ADV-LINE-ENDINGS` | The file mixes line endings, or ends lines with a bare carriage return |
+| `ADV-FORMULA-CELL` | A cell begins with a character a spreadsheet may evaluate as a formula |
+| `ADV-HIDDEN-CHARACTER` | A cell no implemented rule constrains holds an invisible character |
+| `ADV-REPEATED-HEADER` | A data row is an exact copy of the header row |
+
+ADR 0004 records the reasoning, and `tests/test_adversarial_input.py` holds
+the corpus. Its central assertion is one line applied to every case: a report
+with no findings and no advisories reads as a clean file, so no hostile input
+may produce one.
 
 ## Supported profiles
 
@@ -111,7 +145,7 @@ Implemented and grounded in published text:
 | QP022 | Utility Distribution Company is PGE, SCE or SDGE |
 | QP023 | A residential `RE` code is in the published residential table |
 | QP024 | County Number is zero padded, for example `07` (warning) |
-| QP025 | Customer Type is `O`, which two published documents disagree about (info) |
+| QP025 | Customer Type is `O`, published in the workshop deck and absent from the instructions (info) |
 | QP030 | Months fall within one calendar quarter (warning) |
 | QP031 | Rows share one reporting year (warning) |
 
@@ -184,6 +218,21 @@ the workshop deck lists "B (Bundled), D (Direct Access), C (Community Choice
 Aggregator), O (for BART, PGE only)". `O` produces a QP025 informational note
 naming both sources, not an error.
 
+That call was re-examined, because the obvious objection is that the
+instructions were revised three weeks *after* the deck, which would make the
+deck a superseded draft. The published record does not support that reading.
+The July 2025 instructions carry no change log, errata or revision history,
+and neither do the three sibling documents reissued the same day. More to the
+point, `O` was never in the instructions to withdraw: the previous published
+revision, which the Commission's forms page still linked in May 2025 and which
+remains live, reads "4. Customer Type. D = Direct Access Customer. B = Bundled
+Customer." Two values. The pre-portal Excel form carries the same pair. So the
+sequence runs B and D, then B, D and C, and the July revision's net change was
+to **add** C. No revision has ever removed `O`, and nothing published since
+mentions it either way. ADR 0005 records the search and its outcome. The call
+flips only on published text stating that `O` is not accepted; the data
+dictionary slide 44 promises, which is still unpublished, would be that text.
+
 ### What is deliberately out of scope
 
 `CEC-1304` power plant generation reporting is not covered. It belongs to a
@@ -205,6 +254,11 @@ from secondary sources.
   <https://www.energy.ca.gov/rules-and-regulations/energy-suppliers-reporting/quarterly-fuel-and-energy-reporting-qfer>
 - CEC-1306A instructions (rev. 07/14/2025):
   <https://www.energy.ca.gov/sites/default/files/2025-07/1306A_Instructions_07142025_ada.pdf>
+- The previous published revision of the CEC-1306A instructions, still live and
+  still linked by the Commission's forms page in May 2025. It is read for one
+  purpose only, in ADR 0005: to establish what the Customer Type list said
+  before the current revision. No rule cites it.
+  <https://www.energy.ca.gov/sites/default/files/2020-08/1306A_Instructions_ada.pdf>
 - CEC-1306B instructions (rev. 07/14/2025):
   <https://www.energy.ca.gov/sites/default/files/2025-07/1306B_Instructions_07142025_ada.pdf>
 - CEC-1308B instructions (rev. 07/14/2025):
