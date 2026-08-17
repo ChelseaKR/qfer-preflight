@@ -182,6 +182,11 @@ def test_county_table_matches_the_published_shape() -> None:
     assert COUNTY_NAMES["00"] == "Unknown"
     for n in range(1, 59):
         assert str(n) in COUNTY_NUMBERS
+    # Counties 1 to 58 are written unpadded, so "00" is the only key in the
+    # table carrying a leading zero. Two CEC publications agree on this: the
+    # table printed in the instructions, and the county level file on the
+    # Energy Consumption Data Files page. See ADR 0008.
+    assert sorted(c for c in COUNTY_NUMBERS if c.startswith("0")) == ["00"]
 
 
 def test_residential_codes_have_no_invented_entries() -> None:

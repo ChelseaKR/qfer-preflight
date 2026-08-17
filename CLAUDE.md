@@ -21,6 +21,9 @@ README. Never guess.
   same reason: SFTP channel, templates only on request.
 - Three published sources are cited: the instruction PDFs, the CSV templates,
   and the June 24, 2025 DSP workshop deck. A rule picks one with `cites=`.
+  The README's source list is longer than that on purpose. It also records
+  documents that were read and grounded nothing, so a later reader knows the
+  ground was covered. Being listed there does not make a document citable.
 
 ## Hard guardrails
 

@@ -190,7 +190,7 @@ Registered but **not implemented**, and reported as unevaluated on every run:
 | Rule | Why it is not evaluated |
 |------|--------------------------|
 | QP005 | The instructions prohibit totals rows but publish no marker distinguishing a totals row from a data row. The workshop deck repeats the prohibition and illustrates it with a blank row, so it adds no marker either. Any test would be a heuristic guess. |
-| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public. See below. Length is still checked by QP017. |
+| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public, and the search for a published copy is closed rather than unfinished. See below. Length is still checked by QP017. |
 | QP032 | No published document states which columns form a row's unique reporting key, and the Commission's own worked example contains two rows that differ only in their reported amounts, so a legitimate repeat cannot be told from a duplicate. |
 
 These three are the honest half of the tool. They are visible in every report
@@ -215,6 +215,14 @@ somewhere. Here is where it was looked for and what turned up.
   with a generic JSON Schema engine whose schemas, and therefore whose lists of
   valid values, are served only after sign-in. The public asset carries no code
   list of its own.
+- `ecdms.energy.ca.gov`, the Commission's older Energy Consumption Data
+  Management System, does not resolve. That is not a transient fault: the host
+  returns NXDOMAIN from every resolver tried, because the system is retired.
+  Its successor is the Energy Consumption Data Files page, which was retrieved
+  and read on 2026-08-17. It publishes no NAICS code list, no customer type
+  list and no rate class list. The `SECTOR` column in its files holds
+  descriptive text such as "Agriculture and Water Pumping" rather than a code,
+  and no six digit value appears anywhere in either file read.
 - The workshop deck says where the list actually lives: a "data dictionary
   showing expected data types and lists of valid values for fields that have
   common errors (e.g., NAICS code, county number, customer type, UDC name,
@@ -226,9 +234,13 @@ text says the phrase means that, and the Commission's own accepted set demonstra
 includes codes Census does not publish, namely the `RE` series in the
 residential table.
 
-So QP018 stays registered and unevaluated. If you have the data dictionary from
-your portal app landing page, the list can be transcribed and the rule
-implemented; that is a transcription job, not a research one.
+So QP018 stays registered and unevaluated, and the search for a published copy
+is closed rather than merely unfinished. The routes the Commission itself names
+are the portal app landing pages, which require an account, and a request to
+Commission staff. Neither produces a document published at a URL this project
+can cite. If you have the data dictionary from your portal app landing page,
+the list can be transcribed and the rule implemented; that is a transcription
+job, not a research one.
 
 ### Where the published documents disagree with each other
 
@@ -248,6 +260,19 @@ for the field is a negative number, `-24`, while its published warning example
 is a plausible but suspect value, `14 instead of 41`. So `01` through `09` are
 a QP024 warning, not a QP013 failure. `00` is in the table and is silent.
 `007` has no published cover at all and remains an error.
+
+A second CEC dataset, the county level table on the Energy Consumption Data
+Files page, was read on 2026-08-17 and corroborates the county code set
+independently: 58 distinct county numbers, 1 through 58, every one unpadded,
+with a number to name mapping agreeing with the instruction table on 57 of the
+58. That is a second Commission publication, from a different programme,
+arriving at the same codes, so the transcribed table is not a misreading of one
+document. It does not turn padding into an error, for three reasons recorded in
+ADR 0008: no published source says a filer must not pad, the county numbers in
+that file are stored as spreadsheet numbers and so cannot carry a leading zero
+whatever was intended, and the dataset is aggregate consumption reporting
+rather than a QFER filing, so it says nothing about what the portal accepts.
+The warning stands, on better evidence than it had.
 
 **Customer Type `O`.** The CEC-1306A instructions list D, B and C. Slide 9 of
 the workshop deck lists "B (Bundled), D (Direct Access), C (Community Choice
@@ -325,6 +350,29 @@ from secondary sources.
   source for QP024 and QP025. It is a slide deck, and it predates the current
   instructions by three weeks, so it is used only to withhold an error, never
   to add one.
+- Energy Consumption Data Files, the CEC page that succeeded the retired
+  `ecdms.energy.ca.gov`:
+  <https://www.energy.ca.gov/files/energy-consumption-data-files>
+  Two files from it were retrieved and read on 2026-08-17. Neither is a QFER
+  filing document and no rule cites either. They are listed because a source
+  that was checked and found not to contain something is worth the same as one
+  that did, and because the first corroborates the county table.
+  - `AGG_CONSUMPTION_ELEC_COUNTY_TBL_ada.xlsx`,
+    <https://www.energy.ca.gov/filebrowser/download/8144>. Columns `YEAR`,
+    `COUNTY_NUM`, `COUNTY_NAME`, `SECTOR`, `RNR`, `GWH`, over 14,168 data rows
+    for 1990 to 2024. **Contains** 58 distinct county numbers, 1 through 58,
+    all unpadded, agreeing with the instruction table's names on 57 of the 58.
+    **Does not contain** any zero padded county number, any `00` or `99`, any
+    NAICS code, any customer type or any rate class. Its `SECTOR` column is
+    descriptive text. See ADR 0008, which also records the two defective rows
+    in it.
+  - `AGG_CONSUMPTION_ELEC_UTILITY_TBL_ada.xlsx`,
+    <https://www.energy.ca.gov/filebrowser/download/8168>. Columns `YEAR`,
+    `PLANNING_AREA`, `AGENCY_NAME`, `AGENCY_TYPE`, `SECTOR`, `RNR`, `GWH`.
+    **Contains** utility names and planning areas. **Does not contain** any
+    NAICS code, customer type or rate class; its `SECTOR` is descriptive text
+    such as "Agriculture and Water Pumping", and no six digit value appears in
+    it anywhere. It grounds no rule and closes part of the QP018 search.
 
 Published documents change. When they do, this tool is wrong until it is
 updated. Check the rule citations against the current published instructions

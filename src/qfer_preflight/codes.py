@@ -25,6 +25,22 @@ from types import MappingProxyType
 #
 # The instructions describe the data type as "numeric data type for county
 # numbers 1-58 and 99, and text data type for county "00"".
+#
+# Corroborated by a second CEC dataset, read on 2026-08-17: the county level
+# table on the Energy Consumption Data Files page,
+# https://www.energy.ca.gov/files/energy-consumption-data-files, file
+# AGG_CONSUMPTION_ELEC_COUNTY_TBL_ada.xlsx at
+# https://www.energy.ca.gov/filebrowser/download/8144. It carries columns
+# YEAR, COUNTY_NUM, COUNTY_NAME, SECTOR, RNR, GWH over 14,168 data rows for
+# 1990 to 2024, and uses exactly 58 distinct county numbers, 1 through 58,
+# every one of them unpadded. Its number to name mapping agrees with the table
+# above for 57 of the 58, and the fifty-eighth is a defect in that file rather
+# than a disagreement: number 33 is RIVERSIDE on 245 rows and is also written
+# on one 2024 row labelled IMPERIAL and one labelled SAN DIEGO, while the same
+# file numbers Imperial 13 and San Diego 37 everywhere else, as this table
+# does. The dataset is aggregate consumption reporting rather than a QFER
+# filing, so it contains neither "00" nor "99", and it grounds nothing about
+# them. See ADR 0008.
 _COUNTY_NAMES: dict[str, str] = {
     "1": "Alameda",
     "2": "Alpine",
@@ -102,6 +118,12 @@ COUNTY_NUMBERS: frozenset[str] = frozenset(_COUNTY_NAMES)
 # treating the value as wrong, so this project does not report one as an error.
 # It is still worth flagging, because the published county table writes these
 # counties unpadded and every published example does too. See ADR 0003.
+#
+# A second published CEC dataset writes them unpadded as well, which is why
+# this stays a warning rather than becoming silent. What it does not do is make
+# padding an error: no published source says a filer must not pad, and the
+# county numbers in that file are stored as spreadsheet numbers, which cannot
+# carry a leading zero whatever the publisher intended. See ADR 0008.
 _PADDED_COUNTY_NUMBERS: dict[str, str] = {
     f"0{n}": str(n) for n in range(1, 10) if str(n) in _COUNTY_NAMES
 }

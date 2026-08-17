@@ -346,15 +346,26 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
             "reference resolves to nothing public. The phrase is not a "
             "hyperlink in either instruction PDF, neither PDF carries a NAICS "
             "appendix, and the list appears at no URL on energy.ca.gov that "
-            "this project could retrieve. The workshop deck places it in a "
-            '"data dictionary showing expected data types and lists of valid '
-            'values", to be posted on the portal app landing pages, which sit '
-            "behind authentication, or obtained by emailing Commission staff. "
-            "The list is also not simply the federal Census Bureau list, since "
-            "the Commission's own accepted set includes its RE custom codes, "
-            "which are not Census codes. Membership is therefore not checked. "
-            "Length is still checked, by QP017, and the CEC custom "
-            "classification codes are still checked, by QP023."
+            "this project could retrieve. The search for a published copy is "
+            "closed rather than unfinished. The last unexplored avenue was the "
+            "Commission's older Energy Consumption Data Management System, "
+            "whose host does not resolve because the system is retired, not "
+            "because of any transient fault. Its successor, the Energy "
+            "Consumption Data Files page, was retrieved and read on "
+            "2026-08-17: it publishes no NAICS code list, no customer type "
+            "list and no rate class list, its SECTOR column holds descriptive "
+            'text such as "Agriculture and Water Pumping" rather than a code, '
+            "and no six digit value appears anywhere in it. The workshop deck "
+            'places the list in a "data dictionary showing expected data types '
+            'and lists of valid values", to be posted on the portal app '
+            "landing pages, which sit behind authentication, or obtained by "
+            "emailing Commission staff. Neither route yields a document "
+            "published at a URL this project can cite. The list is also not "
+            "simply the federal Census Bureau list, since the Commission's own "
+            "accepted set includes its RE custom codes, which are not Census "
+            "codes. Membership is therefore not checked. Length is still "
+            "checked, by QP017, and the CEC custom classification codes are "
+            "still checked, by QP023."
         ),
         tags=("field", "codeset"),
     ),

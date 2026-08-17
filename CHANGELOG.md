@@ -128,7 +128,19 @@ breaking change and is recorded here.
   Schedule 3 and `CEC-1308B` Schedule 2 are out of scope for the same reason:
   both go by SFTP and their templates are only available on request.
 - The CEC "Valid NAICS codes" list is referenced by the instructions but is not
-  published at a retrievable URL, so QP018 checks nothing and says so.
+  published at a retrievable URL, so QP018 checks nothing and says so. The
+  search for a published copy is now closed rather than unfinished.
+  `ecdms.energy.ca.gov` does not resolve because that system is retired, and
+  its successor, the Energy Consumption Data Files page, was read on
+  2026-08-17 and publishes no NAICS code list, no customer type list and no
+  rate class list.
+- ADR 0008 records a second CEC dataset corroborating the county code set: 58
+  distinct county numbers, 1 through 58, all unpadded. It leaves QP024 a
+  warning rather than making padding an error, because no published source
+  says a filer must not pad, the file stores county numbers as spreadsheet
+  numbers which cannot carry a leading zero anyway, and it is aggregate
+  consumption reporting rather than a QFER filing. No rule, severity or code
+  set changed.
 - ADR 0003 records what the tool does when two published Commission documents
   disagree: it declines to report an error and reports the disagreement.
 - ADR 0005 records a re-examination of the Customer Type `O` call. It holds.
