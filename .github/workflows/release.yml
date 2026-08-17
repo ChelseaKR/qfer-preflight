@@ -4,10 +4,11 @@ name: Release
 # write permission, and the job that can write never checks out repository
 # content. Neither can publish something the other did not approve.
 #
-# Before the first release, set the repository secret RELEASE_ALLOWED_SIGNERS
-# to the allowed-signers line for the key that signs release tags, in the
-# format that git's gpg.ssh.allowedSignersFile expects. Without it the
-# verification job fails closed and nothing is published.
+# The key that signs release tags is committed at .github/allowed_signers, one
+# line per identity in the format git's gpg.ssh.allowedSignersFile expects, and
+# it is read from trusted main rather than from the tag under release. While
+# that file names no principal, the verification job fails closed and nothing
+# is published.
 
 on:
   workflow_dispatch:
@@ -43,23 +44,50 @@ jobs:
       - name: Verify the tag object, its signature and its ancestry
         env:
           TAG: ${{ inputs.tag }}
-          ALLOWED_SIGNERS: ${{ secrets.RELEASE_ALLOWED_SIGNERS }}
         run: |
           set -euo pipefail
-          test -n "${ALLOWED_SIGNERS}"
+          # Present is not the same as populated. A signer list holding only
+          # comments and blank lines would hand signature verification an
+          # empty principal list, and the failure would read like a bad
+          # signature rather than a missing key, so refuse before anything
+          # else runs.
+          grep -qv '^[[:space:]]*\(#\|$\)' .github/allowed_signers
           git fetch --tags --force origin
 
           # An annotated or signed tag is a tag object. A lightweight tag
           # points straight at a commit and carries no signature.
           test "$(git cat-file -t "${TAG}")" = "tag"
 
-          printf '%s\n' "${ALLOWED_SIGNERS}" > "${RUNNER_TEMP}/allowed_signers"
-          git config gpg.ssh.allowedSignersFile "${RUNNER_TEMP}/allowed_signers"
+          git config gpg.ssh.allowedSignersFile .github/allowed_signers
           git verify-tag "${TAG}"
 
           # The tag must already be on main, so a release can never ship code
           # that did not go through the branch.
           git merge-base --is-ancestor "${TAG}" origin/main
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+        with:
+          enable-cache: false
+
+      - name: Run the full gate at the tagged commit
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          git checkout --detach "${TAG}^{commit}"
+          uv python install 3.12
+          uv sync --locked
+          make verify
+
+      - name: Confirm the tag and the package version agree
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          have="$(uv run python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          test "${want}" = "${have}"
 
   publish:
     name: Publish the release

@@ -1,0 +1,13 @@
+# SSH allowed signers, consumed by `git verify-tag` in the release workflow.
+#
+# One line per signing identity, in the format git's gpg.ssh.allowedSignersFile
+# expects:
+#   <principal> namespaces="git" <key-type> <public-key>
+#
+# Public keys only. Nothing secret belongs in this file.
+# The principal below is the maintainer's release-signing key, checked against
+# the GitHub API (users/ChelseaKR/ssh_signing_keys) on 2026-08-17, where it is
+# recorded as "outcome-receipts release signing". A tag signed by any other key
+# does not verify, and the release workflow fails closed if this file ever
+# lists no principal.
+3114598+ChelseaKR@users.noreply.github.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIOjn/aI0d9jElCoi7qT4+6j9UmgTH7vLGAqJXiKMoCE

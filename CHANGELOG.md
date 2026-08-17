@@ -11,6 +11,16 @@ breaking change and is recorded here.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-08-18
+
+First release. An offline pre-submission validator for California Energy
+Commission QFER Consumption CSV filings: every finding cites the published
+rule it came from, and anything the tool cannot evaluate is reported as not
+evaluated rather than passed. An independent utility, not affiliated with,
+endorsed by, or approved by the California Energy Commission.
+
 ### Added
 
 - Validation engine with a fail-closed contract: unparseable input, an empty
@@ -116,10 +126,14 @@ breaking change and is recorded here.
   code set, suggest the corrected numeric value, and distinguish a value that
   is out of range from one that is not a number at all.
 - Tests for the release workflow's fail-closed behaviour. The guard that stops
-  the job when `RELEASE_ALLOWED_SIGNERS` is unset is lifted out of the workflow
-  file and run in a real shell, unset and blank, and both stop the job.
-- A "Releasing" section in `CONTRIBUTING.md` documenting the one manual setup
-  step a first release needs.
+  the job when `.github/allowed_signers` names no principal is lifted out of
+  the workflow file and run in a real shell, against a missing file, an empty
+  file and a comment-only file, and all three stop the job. The signer list is
+  committed and names the maintainer's release-signing key, and the workflow
+  re-runs `make verify` at the exact tagged commit and refuses a tag whose
+  name disagrees with the package version.
+- A "Releasing" section in `CONTRIBUTING.md` documenting how a release is cut
+  and what the workflow refuses.
 
 ### Notes
 
@@ -149,4 +163,5 @@ breaking change and is recorded here.
   `O` has never appeared in any revision of the instructions to be removed
   from. No published text since says it is not accepted.
 
-[Unreleased]: https://github.com/ChelseaKR/qfer-preflight/commits/main
+[Unreleased]: https://github.com/ChelseaKR/qfer-preflight/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ChelseaKR/qfer-preflight/releases/tag/v0.1.0

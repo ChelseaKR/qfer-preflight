@@ -67,28 +67,28 @@ The release workflow is manual (`workflow_dispatch`) and split in two. The job
 that checks out repository content can only read; the job that can write never
 checks out content. Verification has to succeed before publication starts.
 
-There is exactly one manual setup step, and it has to be done once before the
-first release:
+The key that signs release tags is committed at **`.github/allowed_signers`**,
+one line per identity, in the format git's `gpg.ssh.allowedSignersFile`
+expects, for example:
 
-- Set the repository secret **`RELEASE_ALLOWED_SIGNERS`** to the allowed-signers
-  line for the SSH key that signs release tags, in the format git's
-  `gpg.ssh.allowedSignersFile` expects, for example:
+```
+you@example.com namespaces="git" ssh-ed25519 AAAAC3Nza...
+```
 
-  ```
-  you@example.com namespaces="git" ssh-ed25519 AAAAC3Nza...
-  ```
+While that file holds no principal, only comments and blank lines, the
+verification job stops on its first line and nothing is published. That is
+deliberate: without a populated allowed-signers list `git verify-tag` has no
+key to check a signature against, so continuing would mean releasing a tag
+nobody verified. `tests/test_release_workflow.py` runs that guard in a real
+shell against a missing file, an empty file and a comment-only file, and
+asserts all three stop the job.
 
-Until that secret is set, the verification job stops on its first line and
-nothing is published. That is deliberate: without an allowed-signers file
-`git verify-tag` has no key to check a signature against, so continuing would
-mean releasing a tag nobody verified. `tests/test_release_workflow.py` runs
-that guard in a real shell with the secret unset and with it blank, and
-asserts both stop the job.
-
-Then, to release, sign an annotated tag on `main`, push it, and run the
-workflow with that tag name. The workflow refuses lightweight tags, refuses
-tags that are not reachable from `main`, and refuses tags whose signature does
-not verify against the allowed-signers line.
+To release, sign an annotated tag on `main`, push it, and run the workflow
+with that tag name. The workflow refuses lightweight tags, refuses tags that
+are not reachable from `main`, refuses tags whose signature does not verify
+against the committed allowed-signers list, re-runs `make verify` at the exact
+tagged commit, and refuses a tag whose name disagrees with the version in
+`pyproject.toml`.
 
 ## Changing the fail-closed contract
 
