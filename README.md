@@ -155,7 +155,9 @@ job is to match what the portal expects, not what the template ought to say.
 
 Run `qfer-preflight rules` for the registry with full citations. Rule
 identifiers are permanent: an identifier is never renumbered and never reused
-for a different check.
+for a different check. Every column of every published template is mapped to
+the rules that touch it in `docs/column-coverage.md`, and a test holds that
+map against the registry.
 
 Implemented and grounded in published text:
 

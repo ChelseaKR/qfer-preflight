@@ -11,7 +11,17 @@ breaking change and is recorded here.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- `docs/column-coverage.md`, mapping every column of every published template
+  to the rules that touch it, with the three columns no rule names yet marked
+  as open cells rather than left implicit. `tests/test_column_coverage.py`
+  holds the map against both ends: every profile header must appear in order,
+  every identifier named must exist in the registry, every registered rule
+  must be named, and no advisory code outside the closed code space may
+  appear.
+- `docs/ROADMAP.md`, the expansion roadmap: six phases, each gated on the
+  same citation bar as the code.
 
 ## [0.1.0] - 2026-08-18
 
