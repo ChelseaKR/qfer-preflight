@@ -32,6 +32,13 @@ breaking change and is recorded here.
   the manifest. Dev-time only: nothing at runtime reads it and no test fetches
   anything.
 
+### Changed
+
+- The three registered-but-unevaluated rules (QP005, QP018, QP032) now carry
+  their promotion condition in the reason text every report already prints:
+  the exact published evidence that would turn each into an implemented rule,
+  and why nothing less would do. No rule changed what it evaluates.
+
 ## [0.1.0] - 2026-08-18
 
 First release. An offline pre-submission validator for California Energy

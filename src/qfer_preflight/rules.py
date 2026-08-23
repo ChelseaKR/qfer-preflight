@@ -217,7 +217,11 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
             "totals row that carried a valid company number, year, month and "
             "county would be indistinguishable from data. Any test would be a "
             "heuristic guess, so this rule is registered and left unevaluated "
-            "rather than being approximated."
+            "rather than being approximated. Promotion condition: published "
+            "text distinguishing a totals row from a data row, for example a "
+            "marker the instructions say such a row must carry, or a worked "
+            "example of one in a CEC document. No amount of ingenuity about "
+            "row shapes substitutes for either."
         ),
         tags=("structural",),
     ),
@@ -365,7 +369,14 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
             "accepted set includes its RE custom codes, which are not Census "
             "codes. Membership is therefore not checked. Length is still "
             "checked, by QP017, and the CEC custom classification codes are "
-            "still checked, by QP023."
+            "still checked, by QP023. Promotion condition: the Commission's "
+            "data dictionary, promised on slide 44 of the workshop deck as "
+            "listing valid values for fields including NAICS code, published "
+            "at a URL this project can retrieve. Then transcribing the list "
+            "into codes.py with provenance and implementing membership is a "
+            "transcription job. A copy obtained behind portal authentication "
+            "or by emailing staff does not qualify: a citation in this project "
+            "names a source a reader can check without an account."
         ),
         tags=("field", "codeset"),
     ),
@@ -489,7 +500,12 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
             "invention. The only duplicate rule published anywhere applies to "
             "whole submissions rather than rows: the portal refuses a second "
             'submission for the same entity and period ("This entity has '
-            'already submitted for this year and period", slide 35).'
+            'already submitted for this year and period", slide 35). '
+            "Promotion condition: published text naming the columns that form "
+            "a row's unique reporting key, or published text acknowledging "
+            "that legitimate repeats exist and bounding what they may repeat. "
+            "Either would let the check be written without choosing a key by "
+            "inference."
         ),
         tags=("cross-row",),
     ),
