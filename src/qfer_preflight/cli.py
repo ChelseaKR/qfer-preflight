@@ -23,7 +23,9 @@ from .model import BatchEntry, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
 from .report import (
     batch_to_json,
+    batch_to_sarif,
     batch_to_text,
+    report_to_sarif,
     rules_to_json,
     rules_to_text,
     to_json,
@@ -74,7 +76,9 @@ def build_parser() -> argparse.ArgumentParser:
             "published template is accepted"
         ),
     )
-    check.add_argument("--format", choices=("text", "json"), default="text", help="output format")
+    check.add_argument(
+        "--format", choices=("text", "json", "sarif"), default="text", help="output format"
+    )
     check.add_argument(
         "--strict",
         action="store_true",
@@ -210,7 +214,13 @@ def _check_single(path: str, args: argparse.Namespace) -> int:
         print(entry.problem or "could not validate the input", file=sys.stderr)
         return EXIT_USAGE
 
-    output = to_json(entry.report) if args.format == "json" else to_text(entry.report)
+    output = (
+        report_to_sarif(entry.report)
+        if args.format == "sarif"
+        else to_json(entry.report)
+        if args.format == "json"
+        else to_text(entry.report)
+    )
     sys.stdout.write(output)
 
     report = entry.report
@@ -230,7 +240,9 @@ def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
     entries = [_validate_one(path, profile) for path in paths]
 
     output = (
-        batch_to_json(entries, TOOL_NAME, __version__)
+        batch_to_sarif(entries, TOOL_NAME, __version__)
+        if args.format == "sarif"
+        else batch_to_json(entries, TOOL_NAME, __version__)
         if args.format == "json"
         else batch_to_text(entries, TOOL_NAME)
     )
