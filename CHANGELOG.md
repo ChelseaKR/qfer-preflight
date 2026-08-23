@@ -22,6 +22,15 @@ breaking change and is recorded here.
   appear.
 - `docs/ROADMAP.md`, the expansion roadmap: six phases, each gated on the
   same citation bar as the code.
+- `docs/source-manifest.md`, recording a retrieval date and a SHA-256 for
+  every published document the tool cites: the four instruction PDFs, the five
+  CSV templates, the workshop deck, the previous 1306A revision read in
+  ADR 0005, and the two Energy Consumption Data Files spreadsheets. A hash
+  that stops matching means a cited document changed; the procedure at the top
+  of the file begins with "stop", not with refreshing the hash.
+  `tests/test_source_manifest.py` refuses a profile-cited document absent from
+  the manifest. Dev-time only: nothing at runtime reads it and no test fetches
+  anything.
 
 ## [0.1.0] - 2026-08-18
 
