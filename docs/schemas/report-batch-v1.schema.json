@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qfer-preflight batch envelope, schema version 1",
+  "description": "The document produced when `qfer-preflight check` is given more than one input, or a directory. The envelope carries one entry per input and aggregates nothing: findings never merge across inputs and no count in the envelope sums across them. Each entry whose outcome is `validated` embeds a complete single-report document conforming to the report schema of the same major version (docs/schemas/report-v1.schema.json); this file does not duplicate that schema's definitions, and the test suite cross-validates every embedded report against it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tool", "tool_version", "schema_version", "kind", "results"],
+  "properties": {
+    "tool": { "const": "qfer-preflight" },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "schema_version": { "const": 1 },
+    "kind": { "const": "qfer-preflight/batch" },
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["input_name", "outcome"],
+        "oneOf": [
+          { "required": ["input_name", "outcome", "status", "report"] },
+          { "required": ["input_name", "outcome", "problem"] }
+        ],
+        "properties": {
+          "input_name": { "type": "string", "minLength": 1 },
+          "outcome": { "enum": ["validated", "not-validated"] },
+          "status": { "enum": ["pass", "fail", "unvalidated"] },
+          "problem": { "type": "string", "minLength": 1 },
+          "report": {
+            "type": "object",
+            "description": "A complete single-report document. Must conform to docs/schemas/report-v1.schema.json; the suite enforces that by validating real embedded reports against it."
+          }
+        }
+      }
+    }
+  }
+}

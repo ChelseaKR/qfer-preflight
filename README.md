@@ -27,6 +27,14 @@ uv run qfer-preflight check my-filing.csv --profile CEC-1306A-S1
 and proceeds only on an exact match against one published template; zero
 matches or several are a usage error, never a guess.
 
+Several files, or directories, may be checked in one run. Each input keeps
+its own complete report; findings never merge across inputs and nothing
+aggregates them. The JSON output becomes a batch envelope,
+`docs/schemas/report-batch-v1.schema.json`, embedding each single-report
+document unchanged. An input that cannot be processed appears with its reason
+stated, never dropped. Batch exit codes: `1` when any filing has error-level
+findings, else `2` when any input could not be processed, else `0`.
+
 Show every rule with the text it was derived from:
 
 ```sh

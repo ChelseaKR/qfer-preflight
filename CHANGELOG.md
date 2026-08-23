@@ -13,6 +13,16 @@ breaking change and is recorded here.
 
 ### Added
 
+- Batch mode. `check` now accepts several paths and directories, in name
+  order. Each input produces its own complete report; findings never merge
+  across inputs and no count aggregates across them. JSON output becomes a
+  batch envelope, published as `docs/schemas/report-batch-v1.schema.json`,
+  embedding each single-report document unchanged; the suite cross-validates
+  every embedded report against the v1 report schema and asserts byte parity
+  with validating each file alone. Inputs that cannot be processed appear as
+  `not-validated` entries carrying their reason, never silently dropped.
+  Aggregate exit codes: findings outrank usage problems, so a run containing
+  both a failed filing and an unreadable path exits `1`, not `2`.
 - Profile detection. `check --profile` is now optional: when it is omitted,
   the tool reads the file's header row and proceeds only on an exact,
   unambiguous match against the published templates, typos included. No
