@@ -23,6 +23,10 @@ uv run qfer-preflight profiles
 uv run qfer-preflight check my-filing.csv --profile CEC-1306A-S1
 ```
 
+`--profile` may be omitted. When it is, the tool reads the file's header row
+and proceeds only on an exact match against one published template; zero
+matches or several are a usage error, never a guess.
+
 Show every rule with the text it was derived from:
 
 ```sh

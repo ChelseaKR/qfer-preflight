@@ -13,6 +13,12 @@ breaking change and is recorded here.
 
 ### Added
 
+- Profile detection. `check --profile` is now optional: when it is omitted,
+  the tool reads the file's header row and proceeds only on an exact,
+  unambiguous match against the published templates, typos included. No
+  match, several matches, an unreadable file and an empty file are all usage
+  errors that say so, never guesses. Naming `--profile` explicitly keeps the
+  old behaviour, including validating a file whose header is wrong.
 - `docs/schemas/report-v1.schema.json`, a published JSON Schema for the
   `--format json` report, with the compatibility policy written into it:
   additive fields are minor, removals and type changes are breaking. Reports
