@@ -13,6 +13,30 @@ breaking change and is recorded here.
 
 ### Added
 
+- QP033, an error when a Company Number is not written as digits alone. All
+  four instruction documents publish the column as numeric data type,
+  allowing text only so a leading zero survives; CEC-1306B adds that
+  "Non-numeric characters (e.g., dashes) must be removed", and the workshop
+  deck's formatting rule 4 names Company Number among the fields that may
+  not carry blank cells or non-numeric characters. A blank cell stays a
+  QP021 presence finding rather than piling on.
+- QP034, registered and permanently unevaluated: the workshop deck's "Do not
+  include commas anywhere in the file". Taken literally it rejects every CSV
+  the portal itself defines; any narrower reading would be interpretation.
+  Its reason text says so, and points at QP019, QP020 and QP033 for what is
+  mechanical in the same sentence.
+- `--format sarif` on `check`: SARIF 2.1.0, one run per input in batch mode.
+  Findings become results with severities mapped to levels; merged findings
+  stay one result naming its occurrences; cited rules carry their citation
+  and quote; advisories remain results of level none under rule entries
+  flagged advisory:true whose description states no published CEC document
+  stands behind them. Status, unevaluated rules with their reasons and the
+  merge policy survive in run.properties.
+- The column coverage map closed its three open cells after reading:
+  `RateClass`, `RetailRatClass` and `Description` publish free-text
+  descriptions and, in one case, a filing-eligibility threshold the CSV
+  cannot evidence. No mechanical constraint exists to check, and the map now
+  records the reading instead of leaving the cells silent.
 - Batch mode. `check` now accepts several paths and directories, in name
   order. Each input produces its own complete report; findings never merge
   across inputs and no count aggregates across them. JSON output becomes a

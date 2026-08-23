@@ -113,6 +113,52 @@ _CUSTOMER_TYPE_DSP_QUOTE = (
     "Access), C (Community Choice Aggregator), O (for BART, PGE only)"
 )
 
+# The four instruction documents word the Company Number data type
+# differently, and CEC-1306B alone adds the sentence that names non-numeric
+# characters outright. Each profile carries the wording its own document
+# publishes; see ADR 0002 on why they are not merged into one.
+_COMPANY_NUMBER_QUOTE: Mapping[str, str] = {
+    "CEC-1306A-S1": (
+        "The identification number assigned by CEC staff. Column A, numeric "
+        "data type, or text data type if Company Number begins with leading zero."
+    ),
+    # Schedule 2 shares the Schedule 1 document, and the wording there is the
+    # same field definition reprinted in it.
+    "CEC-1306A-S2": (
+        "The identification number assigned by CEC staff. Column A, numeric "
+        "data type, or text data type if Company Number begins with leading zero."
+    ),
+    "CEC-1306B": (
+        "The identification number assigned by CEC staff. Please use the same "
+        "number contained in the previous submission. Non-numeric characters "
+        "(e.g., dashes) must be removed. If you do not know this number or do "
+        "not know how to access this number, please contact CEC QFER Consumption "
+        "staff. Column A, numeric data type unless your Company Number contains "
+        "a leading zero, in which case, text data type."
+    ),
+    "CEC-1308B-S1": (
+        "The identification number assigned by CEC staff. Column A, numeric "
+        "data type unless your Company Number contains a leading zero, in which "
+        "case, text data type."
+    ),
+    "CEC-1308C": (
+        "The identification number of the gas retailer assigned by CEC staff. "
+        "Column A, numeric data type unless your Company Number contains a "
+        "leading zero, in which case, text data type."
+    ),
+}
+
+# Slide 19 of the DSP workshop deck, formatting rule 4. Its second sentence
+# names fields whose cells may not be blank or carry non-numeric characters,
+# which corroborates QP019 and QP020 on the columns the footnotes already
+# cover and extends them to Company Number, now QP033. Its first sentence is
+# the ground for QP034, which stays unevaluated for the reason stated there.
+_COMMA_AND_BLANK_CELLS_QUOTE = (
+    "Do not include commas anywhere in the file. Do not have blank cells or non-"
+    "numeric characters in the Company Number, Year, Month, County Number, "
+    "Customer Count, Sales, and Revenue fields."
+)
+
 
 def _resolve(source: str | Mapping[str, str] | None, profile_id: str) -> str | None:
     if source is None or isinstance(source, str):
@@ -508,6 +554,40 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
             "inference."
         ),
         tags=("cross-row",),
+    ),
+    RuleSpec(
+        id="QP033",
+        title="Company Number must be written as digits alone",
+        severity=Severity.ERROR,
+        locator='field definition "Company Number"',
+        quote=_COMPANY_NUMBER_QUOTE,
+        applies=lambda p: p.company_number_column is not None,
+        tags=("field",),
+    ),
+    RuleSpec(
+        id="QP034",
+        title="No commas may appear anywhere in the file",
+        severity=Severity.ERROR,
+        locator='slide 19, "Formatting Rules (2/3)", rule 4',
+        quote=_COMMA_AND_BLANK_CELLS_QUOTE,
+        cites="workshop",
+        applies=_always,
+        implemented=False,
+        unimplemented_reason=(
+            'The workshop deck says to "not include commas anywhere in the '
+            'file". Taken literally that rejects every CSV the portal itself '
+            "defines, because the comma is the delimiter the published "
+            "templates are written in. The narrower reading, that no value may "
+            "contain a comma character, would be an interpretation rather than "
+            "a published test, and no instruction document repeats the "
+            "sentence. Any test here would rest on choosing between those "
+            "readings, so this rule is registered and left unevaluated rather "
+            "than approximated. What is mechanical in the same sentence is "
+            "checked elsewhere: blank cells and non-numeric characters in the "
+            "named fields are QP019 and QP020 on the numeric columns, and "
+            "Company Number's form is QP033."
+        ),
+        tags=("structural",),
     ),
 )
 
