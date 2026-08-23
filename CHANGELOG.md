@@ -13,6 +13,13 @@ breaking change and is recorded here.
 
 ### Added
 
+- `docs/schemas/report-v1.schema.json`, a published JSON Schema for the
+  `--format json` report, with the compatibility policy written into it:
+  additive fields are minor, removals and type changes are breaking. Reports
+  now carry a `schema_version` field, currently 1.
+  `tests/test_report_schema.py` validates real reports for every profile,
+  merged findings, advisories, header mismatches and unreadable bytes against
+  the schema, so the two sides cannot drift in either direction.
 - `docs/column-coverage.md`, mapping every column of every published template
   to the rules that touch it, with the three columns no rule names yet marked
   as open cells rather than left implicit. `tests/test_column_coverage.py`

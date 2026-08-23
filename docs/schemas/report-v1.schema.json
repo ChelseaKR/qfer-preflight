@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qfer-preflight validation report, schema version 1",
+  "description": "The document produced by `qfer-preflight check --format json`. Schema version 1 is the first published shape. Compatibility policy: adding an optional field or a new enum value is a minor change and bumps the minor version; removing a field, renaming a field, changing a type, or tightening a constraint that existing reports satisfy is breaking and bumps the major version. The `schema_version` integer in the report names the major version it conforms to.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "tool",
+    "tool_version",
+    "schema_version",
+    "profile",
+    "input",
+    "status",
+    "counts",
+    "collapsed",
+    "findings",
+    "rules_evaluated",
+    "rules_not_evaluated",
+    "advisories"
+  ],
+  "properties": {
+    "tool": { "const": "qfer-preflight" },
+    "tool_version": { "type": "string", "minLength": 1 },
+    "schema_version": { "const": 1 },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": {
+        "name": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "status": { "enum": ["pass", "fail", "unvalidated"] },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "error",
+        "warning",
+        "info",
+        "unvalidated",
+        "advisory",
+        "rows_read",
+        "findings",
+        "finding_lines"
+      ],
+      "properties": {
+        "error": { "type": "integer", "minimum": 0 },
+        "warning": { "type": "integer", "minimum": 0 },
+        "info": { "type": "integer", "minimum": 0 },
+        "unvalidated": { "type": "integer", "minimum": 0 },
+        "advisory": { "type": "integer", "minimum": 0 },
+        "rows_read": { "type": "integer", "minimum": 0 },
+        "findings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Occurrences: every row carrying a finding, before any merging."
+        },
+        "finding_lines": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries in the findings array after identical findings were merged."
+        }
+      }
+    },
+    "collapsed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identical_findings_merged", "policy"],
+      "properties": {
+        "identical_findings_merged": { "type": "integer", "minimum": 0 },
+        "policy": { "type": "string", "minLength": 1 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "rules_evaluated": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ruleId" }
+    },
+    "rules_not_evaluated": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rule_id", "reason"],
+        "properties": {
+          "rule_id": { "$ref": "#/$defs/ruleId" },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/advisory" }
+    }
+  },
+  "$defs": {
+    "ruleId": {
+      "type": "string",
+      "pattern": "^QP[0-9]{3}$"
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "severity", "message"],
+      "properties": {
+        "rule_id": { "$ref": "#/$defs/ruleId" },
+        "severity": { "enum": ["error", "warning", "info"] },
+        "message": { "type": "string", "minLength": 1 },
+        "row": { "type": "integer", "minimum": 1 },
+        "column": { "type": "string", "minLength": 1 },
+        "cell": {
+          "type": "string",
+          "pattern": "^[A-Z]+[0-9]+$",
+          "description": "Spreadsheet reference for the offending value, for example D2."
+        },
+        "occurrences": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Present only when the finding was merged from more than one row."
+        },
+        "example_rows": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "description": "Present only when the finding was merged."
+        },
+        "last_row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Present only when the finding was merged."
+        }
+      }
+    },
+    "advisory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^ADV-[A-Z]+(-[A-Z]+)*$",
+          "description": "An identifier from the closed ADVISORY_CODES table. Advisories carry no severity and cite no document."
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "row": { "type": "integer", "minimum": 1 },
+        "column": { "type": "string", "minLength": 1 },
+        "occurrences": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

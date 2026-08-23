@@ -48,6 +48,18 @@ def severity_rank(severity: str) -> int:
     return _SEVERITY_ORDER.get(severity, 99)
 
 
+# The major version of the JSON report's published schema. It appears in every
+# report as `schema_version` and is validated against
+# docs/schemas/report-v1.schema.json by tests/test_report_schema.py.
+#
+# Compatibility policy: adding an optional field or a new enum value is a
+# minor change and does not move this number. Removing a field, renaming a
+# field, changing a type, or tightening a constraint that existing reports
+# satisfy is breaking: write the new major version of the schema file and bump
+# this number in the same commit.
+REPORT_SCHEMA_VERSION = 1
+
+
 class Status(enum.Enum):
     """Overall verdict for one validated document."""
 
@@ -396,6 +408,7 @@ class Report:
         return {
             "tool": self.tool,
             "tool_version": self.tool_version,
+            "schema_version": REPORT_SCHEMA_VERSION,
             "profile": {"id": self.profile_id, "title": self.profile_title},
             "input": {"name": self.input_name, "sha256": self.input_sha256},
             "status": self.status.value,

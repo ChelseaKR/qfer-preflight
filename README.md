@@ -33,6 +33,11 @@ Exit codes: `0` no error-level findings, `1` at least one error-level finding
 (or, with `--strict`, anything left unevaluated or any advisory raised), `2`
 bad invocation.
 
+The JSON report conforms to a published schema,
+`docs/schemas/report-v1.schema.json`, and carries its version as
+`schema_version`. Additive fields are minor changes; removing or retyping a
+field is breaking and moves the major version.
+
 ## What it will not do
 
 The tool runs entirely on your machine. It opens no network connection, has no
