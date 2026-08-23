@@ -130,6 +130,13 @@ Filings run to hundreds of thousands of rows, and the mistakes that reach a
 validator are usually systemic: one wrong county in a lookup table puts the
 same finding on every row. Printing it 400,000 times is not a report.
 
+The reader is also frugal with the file while it judges it. It walks the
+bytes once, in chunks, keeping facts (a hash, line-ending counts, whether a
+quoted field stayed open) rather than content, then streams rows to the
+checker straight off disk. Peak memory grows with the longest row, not with
+the size of the filing. `scripts/bench_large_file.py` measures that on a
+synthesized filing if you want numbers.
+
 Findings that are **identical** are merged into one line. Identical means the
 same rule, the same column and the same message text, and since the message
 contains the offending value, that means two rows wrong in the same way with
