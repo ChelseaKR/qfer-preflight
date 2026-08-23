@@ -479,3 +479,66 @@ def test_bom_is_tolerated() -> None:
     data = b"\xef\xbb\xbf" + _rows(PROFILE_1306A_S1, "1,2025,1,1,B,A1,999999,1,1,1")
     report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
     assert "QP002" not in _fired(report)
+
+
+# ---------------------------------------------------------------------------
+# QP033: Company Number form
+# ---------------------------------------------------------------------------
+
+
+def test_qp033_accepts_the_published_forms() -> None:
+    """Digits alone, with or without the leading zero text form."""
+    for company in ("123", "0123", "9"):
+        data = _rows(PROFILE_1306A_S1, f"{company},2025,1,1,B,A1,999999,1,1,1")
+        report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+        assert "QP033" not in _fired(report), company
+
+
+@pytest.mark.parametrize(
+    "company",
+    ["12-34", "AB12", "12 34", "+123", "1.5", '"1,234"', "PGE"],
+)
+def test_qp033_rejects_non_numeric_characters(company: str) -> None:
+    cell = company  # already CSV-quoted when the value itself holds a comma
+    data = _rows(PROFILE_1306A_S1, f"{cell},2025,1,1,B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    assert "QP033" in _fired(report), company
+    finding = next(f for f in report.findings if f.rule_id == "QP033")
+    assert finding.severity is Severity.ERROR
+
+
+def test_qp033_leaves_blanks_to_qp021() -> None:
+    """A blank cell is a presence failure; QP033 does not pile on."""
+    data = _rows(PROFILE_1306A_S1, ",2025,1,1,B,A1,999999,1,1,1")
+    report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
+    fired = {f.rule_id for f in report.findings if f.column == "CompanyNumber"}
+    assert "QP021" in fired
+    assert "QP033" not in fired
+
+
+def test_qp033_applies_to_every_profile_and_carries_its_own_quote() -> None:
+    from qfer_preflight.rules import specs_for
+
+    for profile in PROFILES.values():
+        spec = next(s for s in specs_for(profile) if s.id == "QP033")
+        quote = spec.bind(profile).quote or ""
+        assert "numeric" in quote and "data type" in quote, profile.id
+        assert quote != ""
+
+
+def test_qp034_is_registered_and_never_evaluated() -> None:
+    spec = RULE_SPECS_BY_ID["QP034"]
+    assert not spec.implemented
+    assert spec.cites == "workshop"
+    report = validate_bytes(
+        _rows(PROFILE_1306A_S1, "1,2025,1,1,B,A1,999999,1,1,1"), PROFILE_1306A_S1, "x.csv"
+    )
+    assert "QP034" in {n.rule_id for n in report.rules_not_evaluated}
+    assert "QP034" not in _fired(report)
+
+
+def test_a_dashed_company_number_fails_with_the_published_wording_behind_it() -> None:
+    data = _rows(PROFILE_1306B, "12-34,2025,1,PGE,Residential,1,10,100,50")
+    report = validate_bytes(data, PROFILE_1306B, "x.csv")
+    finding = next(f for f in report.findings if f.rule_id == "QP033")
+    assert "digits alone" in finding.message

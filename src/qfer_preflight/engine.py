@@ -67,6 +67,7 @@ TOOL_NAME = "qfer-preflight"
 _FOUR_DIGIT_YEAR = re.compile(r"^[0-9]{4}$")
 _SMALL_INT = re.compile(r"^[0-9]{1,2}$")
 _NUMERIC_VALUE = re.compile(r"^[+-]?[0-9]+(?:\.[0-9]+)?$")
+_COMPANY_NUMBER_DIGITS = re.compile(r"^[0-9]+$")
 
 # The placeholders the instructions explicitly forbid in a numeric field.
 _FORBIDDEN_PLACEHOLDERS = {"", "NULL", "-"}
@@ -1020,6 +1021,36 @@ def _check_year(collector: _Collector, column: str, value: str, row_number: int)
     return value
 
 
+def _check_company_number_form(
+    collector: _Collector, column: str, value: str, row_number: int
+) -> None:
+    """The published form of a Company Number: digits alone.
+
+    Every instruction document publishes the column as numeric data type,
+    allowing text data type only so that a leading zero survives; both forms
+    are digit strings on the page. CEC-1306B says outright that non-numeric
+    characters must be removed. A blank cell is QP021's finding, not this
+    one's.
+    """
+    stripped = value.strip()
+    if not stripped:
+        return
+    if _COMPANY_NUMBER_DIGITS.fullmatch(stripped):
+        return
+    collector.add(
+        "QP033",
+        (
+            f"{column} value {show(value)} {_describe_bad_characters(value)}. "
+            "A company number is published as numeric data type, or as text "
+            "only so a leading zero survives; either way it is written as "
+            "digits alone. Remove any letters, spaces, dashes and separators."
+            f"{cell_note(value)}"
+        ),
+        row=row_number,
+        column=column,
+    )
+
+
 def _check_identity_columns(
     collector: _Collector,
     profile: Profile,
@@ -1039,6 +1070,8 @@ def _check_identity_columns(
             row=row_number,
             column=column,
         )
+    if column:
+        _check_company_number_form(collector, column, cell(column), row_number)
 
     if profile.year_column:
         year = _check_year(collector, profile.year_column, cell(profile.year_column), row_number)

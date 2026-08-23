@@ -217,7 +217,7 @@ def test_every_advisory_raised_on_real_input_disclaims_published_cover() -> None
 
 def test_the_capped_tail_advisory_disclaims_cover_like_any_other() -> None:
     """The summary line the cap produces is an advisory too, and says so."""
-    rows = "\n".join("=1,2025,1,34,B,A1,925190,1,1,1" for _ in range(50))
+    rows = "\n".join("123,2025,1,34,B,=1,925190,1,1,1" for _ in range(50))
     report = _check(f"{HEADER}\n{rows}\n")
     tail = next(a for a in report.advisories if a.occurrences == 50)
 

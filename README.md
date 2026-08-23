@@ -208,6 +208,7 @@ Implemented and grounded in published text:
 | QP023 | A residential `RE` code is in the published residential table |
 | QP024 | County Number is zero padded, for example `07` (warning) |
 | QP025 | Customer Type is `O`, published in the workshop deck and absent from the instructions (info) |
+| QP033 | Company Number is written as digits alone, in the numeric or leading-zero text form the instructions publish |
 | QP030 | Months fall within one calendar quarter (warning) |
 | QP031 | Rows share one reporting year (warning) |
 
@@ -218,6 +219,7 @@ Registered but **not implemented**, and reported as unevaluated on every run:
 | QP005 | The instructions prohibit totals rows but publish no marker distinguishing a totals row from a data row. The workshop deck repeats the prohibition and illustrates it with a blank row, so it adds no marker either. Any test would be a heuristic guess. |
 | QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public, and the search for a published copy is closed rather than unfinished. See below. Length is still checked by QP017. |
 | QP032 | No published document states which columns form a row's unique reporting key, and the Commission's own worked example contains two rows that differ only in their reported amounts, so a legitimate repeat cannot be told from a duplicate. |
+| QP034 | The workshop deck says to "not include commas anywhere in the file". Taken literally that rejects every CSV the portal itself defines, since the comma is the delimiter; the narrower reading would be an interpretation, not a published test. Blank cells and non-numeric characters in the named fields are still checked by QP019, QP020 and QP033. |
 
 These three are the honest half of the tool. They are visible in every report
 precisely so their absence is never mistaken for a clean result. Each one's
