@@ -378,7 +378,9 @@ from secondary sources.
 
 Published documents change. When they do, this tool is wrong until it is
 updated. Check the rule citations against the current published instructions
-before relying on a result.
+before relying on a result. `docs/source-manifest.md` records the SHA-256 and
+retrieval date of every document cited here, so a revision can be detected by
+comparing hashes rather than by rereading everything.
 
 ## Development
 

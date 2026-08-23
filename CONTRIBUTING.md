@@ -90,6 +90,19 @@ against the committed allowed-signers list, re-runs `make verify` at the exact
 tagged commit, and refuses a tag whose name disagrees with the version in
 `pyproject.toml`.
 
+## Keeping the source manifest current
+
+`docs/source-manifest.md` records a retrieval date and a SHA-256 for every
+published document a citation resolves to. When you touch a citation, or before
+a release, re-download the documents and compare hashes. The procedure for a
+hash that no longer matches is at the top of that file, and it begins with
+"stop": a changed document can invalidate quotes, severities and header
+transcriptions, and the drift is a finding to be handled deliberately, not a
+line to refresh.
+
+`tests/test_source_manifest.py` refuses a profile-cited document that is absent
+from the manifest, so new citations cannot skip it.
+
 ## Changing the fail-closed contract
 
 Do not weaken it without an ADR. Specifically: never make a rule report as
