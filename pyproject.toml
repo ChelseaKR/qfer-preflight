@@ -38,6 +38,8 @@ dev = [
   "mypy>=1.18.0",
   "bandit>=1.8.0",
   "pip-audit>=2.9.0",
+  "jsonschema>=4.26.0",
+  "types-jsonschema>=4.26.0.20260518",
 ]
 
 [build-system]
