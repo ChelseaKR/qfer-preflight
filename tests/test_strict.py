@@ -177,6 +177,6 @@ def test_strict_returns_zero_for_a_report_with_nothing_left_unevaluated(
     assert complete.status is Status.PASS
 
     monkeypatch.setattr("qfer_preflight.cli.validate_path", lambda *_: complete)
-    args = argparse.Namespace(profile="CEC-1306A-S1", path="x.csv", format="text", strict=True)
+    args = argparse.Namespace(profile="CEC-1306A-S1", paths=["x.csv"], format="text", strict=True)
     assert _cmd_check(args) == EXIT_OK
     assert "PASS" in capsys.readouterr().out

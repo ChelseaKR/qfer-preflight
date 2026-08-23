@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Sequence
 
-from .model import Finding, Report, Severity, severity_rank
+from .model import BATCH_SCHEMA_VERSION, BatchEntry, Finding, Report, Severity, severity_rank
 from .rules import RuleSpec
 
 _SEVERITY_LABEL = {
@@ -33,6 +33,45 @@ _LINES_PER_RULE_AND_COLUMN = 10
 def to_json(report: Report) -> str:
     """Canonical JSON rendering, ending in a single newline."""
     return json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
+def batch_to_json(entries: Sequence[BatchEntry], tool: str, tool_version: str) -> str:
+    """The batch envelope, ending in a single newline.
+
+    The envelope aggregates outcomes, never findings. Each entry carries its
+    own complete single-report document, which conforms to the published
+    report schema of the same version; nothing is summed across entries.
+    """
+    payload = {
+        "tool": tool,
+        "tool_version": tool_version,
+        "schema_version": BATCH_SCHEMA_VERSION,
+        "kind": "qfer-preflight/batch",
+        "results": [entry.to_dict() for entry in entries],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def batch_to_text(entries: Sequence[BatchEntry], tool: str) -> str:
+    """One section per input, then a summary that repeats every outcome.
+
+    The summary exists because a reader who scrolls past four clean files
+    should not have to scroll back to learn whether the fifth failed.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        lines.append(f"==> {entry.input_name} <==")
+        if entry.report is not None:
+            lines.append(to_text(entry.report).rstrip("\n"))
+        else:
+            lines.append(f"NOT VALIDATED: {entry.problem}")
+        lines.append("")
+    lines.append(f"Batch summary ({tool})")
+    for entry in entries:
+        verdict = entry.report.status.value.upper() if entry.report is not None else "NOT VALIDATED"
+        lines.append(f"  {entry.input_name}: {verdict}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _location(row: int | None, column: str | None, cell: str | None = None) -> str:

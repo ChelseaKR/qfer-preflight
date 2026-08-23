@@ -405,6 +405,7 @@ class Report:
                 f.message,
             ),
         )
+
         return {
             "tool": self.tool,
             "tool_version": self.tool_version,
@@ -446,3 +447,49 @@ class Report:
                 )
             ],
         }
+
+
+# Schema major version of the batch envelope produced when `check` is given
+# more than one input. The compatibility policy is the one stated above
+# REPORT_SCHEMA_VERSION, applied to the envelope rather than to a single
+# report. Each embedded report conforms to the single-report schema of the
+# same version.
+BATCH_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class BatchEntry:
+    """One input's outcome inside a batch run.
+
+    A batch is not a super-report: findings never merge across inputs and no
+    count in the envelope aggregates across them. An input that could not be
+    processed at all appears with `problem` set and no report, because an
+    unreadable file has nothing to validate and pretending otherwise would be
+    exactly the silence this tool exists to refuse.
+    """
+
+    input_name: str
+    report: Report | None = None
+    problem: str | None = None
+
+    def __post_init__(self) -> None:
+        if (self.report is None) == (self.problem is None):
+            raise ValueError(
+                "a batch entry carries exactly one of a report or a problem; "
+                "an entry with both is ambiguous and an entry with neither "
+                "says nothing"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"input_name": self.input_name}
+        if self.report is not None:
+            payload["outcome"] = "validated"
+            payload["status"] = self.report.status.value
+            payload["report"] = self.report.to_dict()
+            return payload
+        problem = self.problem
+        if problem is None:  # pragma: no cover - excluded by __post_init__
+            raise ValueError("a batch entry without a report must carry a problem")
+        payload["outcome"] = "not-validated"
+        payload["problem"] = problem
+        return payload

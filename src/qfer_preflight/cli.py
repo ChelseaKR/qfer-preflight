@@ -12,14 +12,23 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from . import __version__
-from .engine import validate_path
-from .model import Status
+from .engine import TOOL_NAME, validate_path
+from .model import BatchEntry, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
-from .report import rules_to_json, rules_to_text, to_json, to_text
+from .report import (
+    batch_to_json,
+    batch_to_text,
+    rules_to_json,
+    rules_to_text,
+    to_json,
+    to_text,
+)
 from .rules import RULE_SPECS, rules_for
 
 EXIT_OK = 0
@@ -49,7 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     check = sub.add_parser("check", help="validate a CSV submission")
-    check.add_argument("path", help="path to the CSV file to validate")
+    check.add_argument(
+        "paths",
+        nargs="+",
+        help=(
+            "path to the CSV file to validate, or several of them, or "
+            "directories, whose files are validated in name order"
+        ),
+    )
     check.add_argument(
         "--profile",
         help=(
@@ -115,33 +131,120 @@ def _detect_profile(path: str) -> tuple[Profile | None, str | None]:
     return matches[0], None
 
 
-def _cmd_check(args: argparse.Namespace) -> int:
-    profile: Profile
-    if args.profile:
-        try:
-            profile = get_profile(args.profile)
-        except KeyError as exc:
-            print(str(exc), file=sys.stderr)
-            return EXIT_USAGE
-    else:
-        detected, problem = _detect_profile(args.path)
+def _expand_inputs(paths: Sequence[str]) -> tuple[list[str] | None, str | None]:
+    """Directories become their files, in name order; everything else passes through."""
+    expanded: list[str] = []
+    for path in paths:
+        if os.path.isdir(path):
+            inside = sorted(str(item) for item in Path(path).iterdir() if item.is_file())
+            if not inside:
+                return None, f"no files found in {path}"
+            expanded.extend(inside)
+        else:
+            expanded.append(path)
+    if len(set(expanded)) != len(expanded):
+        seen: set[str] = set()
+        deduped = []
+        for path in expanded:
+            if path not in seen:
+                deduped.append(path)
+                seen.add(path)
+        expanded = deduped
+    return expanded, None
+
+
+def _validate_one(path: str, profile: Profile | None) -> BatchEntry:
+    """Validate a single input for the batch, never raising.
+
+    Every refusal becomes an entry that says what happened, because in a batch
+    one unreadable file must not take the whole run down and must not be
+    silently skipped either.
+    """
+    chosen: Profile | None = profile
+    if chosen is None:
+        detected, problem = _detect_profile(path)
         if detected is None:
-            print(problem or "profile detection failed", file=sys.stderr)
-            return EXIT_USAGE
-        profile = detected
+            return BatchEntry(input_name=path, problem=problem or "profile detection failed")
+        chosen = detected
     try:
-        report = validate_path(args.path, profile)
+        return BatchEntry(input_name=path, report=validate_path(path, chosen))
     except OSError as exc:
-        print(f"could not read {args.path}: {exc}", file=sys.stderr)
+        return BatchEntry(input_name=path, problem=f"could not read {path}: {exc}")
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    # Exactly one named file keeps the single-document output exactly as
+    # published, whatever it is: an existing filing, or a path that fails to
+    # open and reports its refusal on stderr as before. Anything else,
+    # including several paths and directories, produces the batch envelope.
+    single_request = len(args.paths) == 1 and not os.path.isdir(args.paths[0])
+    inputs, problem = _expand_inputs(args.paths)
+    if problem is not None or inputs is None:
+        print(problem or "no inputs", file=sys.stderr)
         return EXIT_USAGE
 
-    output = to_json(report) if args.format == "json" else to_text(report)
+    if single_request:
+        return _check_single(inputs[0], args)
+    return _check_batch(inputs, args)
+
+
+def _resolve_profile(args: argparse.Namespace) -> tuple[Profile | None, str | None]:
+    if args.profile:
+        try:
+            return get_profile(args.profile), None
+        except KeyError as exc:
+            return None, str(exc)
+    return None, None
+
+
+def _check_single(path: str, args: argparse.Namespace) -> int:
+    profile, problem = _resolve_profile(args)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return EXIT_USAGE
+    entry = _validate_one(path, profile)
+    if entry.report is None:
+        # Reachable when --profile was omitted and detection refused the
+        # header: single-file mode reports that refusal on stderr, exactly as
+        # detection did before batch mode existed.
+        print(entry.problem or "could not validate the input", file=sys.stderr)
+        return EXIT_USAGE
+
+    output = to_json(entry.report) if args.format == "json" else to_text(entry.report)
     sys.stdout.write(output)
 
+    report = entry.report
     if report.status is Status.FAIL:
         return EXIT_FINDINGS
     if args.strict and report.status is Status.UNVALIDATED:
         return EXIT_FINDINGS
+    return EXIT_OK
+
+
+def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
+    profile, problem = _resolve_profile(args)
+    if problem is not None:
+        print(problem, file=sys.stderr)
+        return EXIT_USAGE
+
+    entries = [_validate_one(path, profile) for path in paths]
+
+    output = (
+        batch_to_json(entries, TOOL_NAME, __version__)
+        if args.format == "json"
+        else batch_to_text(entries, TOOL_NAME)
+    )
+    sys.stdout.write(output)
+
+    statuses = [entry.report.status for entry in entries if entry.report is not None]
+    had_findings = any(
+        status is Status.FAIL or (args.strict and status is Status.UNVALIDATED)
+        for status in statuses
+    )
+    if had_findings:
+        return EXIT_FINDINGS
+    if any(entry.problem is not None for entry in entries):
+        return EXIT_USAGE
     return EXIT_OK
 
 
