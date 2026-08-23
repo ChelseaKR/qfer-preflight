@@ -11,13 +11,14 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import csv
 import sys
 from collections.abc import Sequence
 
 from . import __version__
 from .engine import validate_path
 from .model import Status
-from .profiles import PROFILES, QFER_PROGRAM_URL, get_profile
+from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
 from .report import rules_to_json, rules_to_text, to_json, to_text
 from .rules import RULE_SPECS, rules_for
 
@@ -51,8 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("path", help="path to the CSV file to validate")
     check.add_argument(
         "--profile",
-        required=True,
-        help="form profile, for example CEC-1306A-S1",
+        help=(
+            "form profile, for example CEC-1306A-S1. Omitted, it is detected "
+            "from the file's header row, and only an exact match against one "
+            "published template is accepted"
+        ),
     )
     check.add_argument("--format", choices=("text", "json"), default="text", help="output format")
     check.add_argument(
@@ -72,12 +76,59 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _cmd_check(args: argparse.Namespace) -> int:
+def _detect_profile(path: str) -> tuple[Profile | None, str | None]:
+    """Read the file's header row and match it against the published templates.
+
+    Returns the one matching profile, or a refusal explaining why detection
+    declined to guess. Detection reads the header only; it never validates, and
+    a BOM stripped here is still reported by the validation run as ADV-BOM.
+    """
     try:
-        profile = get_profile(args.profile)
-    except KeyError as exc:
-        print(str(exc), file=sys.stderr)
-        return EXIT_USAGE
+        with open(path, newline="", encoding="utf-8-sig") as handle:
+            header = next(csv.reader(handle), None)
+    except OSError as exc:
+        return None, f"could not read {path}: {exc}"
+    except (UnicodeDecodeError, csv.Error):
+        return None, (
+            f"could not detect a profile for {path}: its first row could not "
+            "be read as UTF-8 CSV. Pass --profile explicitly to have the "
+            "report say what is wrong with it"
+        )
+    if not header:
+        return None, (
+            f"could not detect a profile for {path}: the file has no rows. "
+            "Pass --profile explicitly"
+        )
+    matches = detect_profiles(header)
+    if not matches:
+        return None, (
+            f"could not detect a profile for {path}: its header does not "
+            "match any published template byte for byte. Pass --profile "
+            "explicitly"
+        )
+    if len(matches) > 1:
+        ids = ", ".join(sorted(p.id for p in matches))
+        return None, (
+            f"could not detect a profile for {path}: its header matches "
+            f"several templates ({ids}). Pass --profile explicitly"
+        )
+    return matches[0], None
+
+
+def _cmd_check(args: argparse.Namespace) -> int:
+    profile: Profile
+    if args.profile:
+        try:
+            profile = get_profile(args.profile)
+        except KeyError as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_USAGE
+    else:
+        detected, problem = _detect_profile(args.path)
+        if detected is None:
+            print(problem or "profile detection failed", file=sys.stderr)
+            return EXIT_USAGE
+        profile = detected
     try:
         report = validate_path(args.path, profile)
     except OSError as exc:

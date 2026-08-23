@@ -21,7 +21,7 @@ whether it matches what the template ought to have said.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from .model import Citation
@@ -277,3 +277,16 @@ def get_profile(profile_id: str) -> Profile:
             return profile
     known = ", ".join(sorted(PROFILES))
     raise KeyError(f"unknown profile {profile_id!r}; known profiles: {known}")
+
+
+def detect_profiles(header: Sequence[str]) -> tuple[Profile, ...]:
+    """Every profile whose published header matches this row exactly, in order.
+
+    The comparison is exact against the transcribed template rows, typos
+    included, because those are the rows the portal expects. Detection never
+    guesses: a caller receiving zero or more than one match must refuse to
+    proceed, since validating against the wrong form would produce findings
+    about columns that mean something else.
+    """
+    row = tuple(header)
+    return tuple(profile for profile in PROFILES.values() if profile.header == row)
