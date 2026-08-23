@@ -57,6 +57,19 @@ breaking change and is recorded here.
 
 ### Changed
 
+- `validate_path` no longer holds the filing in memory. It walks the bytes
+  once in bounded chunks, collecting the facts a report needs (the hash, the
+  byte order mark, line-ending counts, emptiness, an unterminated-quote flag,
+  and the exact offset of any invalid UTF-8), then streams rows to the
+  checker off disk. Peak memory now grows with the longest row rather than
+  with the file; a synthesized 400,000-row filing validates at roughly 27 MiB
+  of resident memory in about two seconds. `validate_bytes` runs through the
+  same implementation, so the two entrances cannot disagree;
+  `tests/test_streaming.py` holds every streaming scanner against its
+  whole-text reference across forced chunk boundaries that land inside
+  multibyte characters, escaped quotes and carriage returns, and asserts
+  byte-identical reports between disk and memory for every fixture and a
+  multi-chunk synthetic filing.
 - The three registered-but-unevaluated rules (QP005, QP018, QP032) now carry
   their promotion condition in the reason text every report already prints:
   the exact published evidence that would turn each into an implemented rule,

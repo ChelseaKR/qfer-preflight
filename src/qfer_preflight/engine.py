@@ -22,9 +22,11 @@ never come back with the same verdict as one it has.
 
 from __future__ import annotations
 
+import codecs
 import csv
 import hashlib
 import io
+import os
 import re
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -90,6 +92,13 @@ FILE_LEVEL_ADVISORY_CODES = frozenset({"ADV-BOM", "ADV-LINE-ENDINGS"})
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
+# How many bytes one pass of the reader takes at a time. Peak memory for a
+# path validation is bounded by this, the longest single row, and the findings
+# themselves; it does not grow with the size of the filing. Tests shrink it to
+# force chunk boundaries through multibyte characters, quoted fields and
+# carriage returns that straddle two reads.
+_CHUNK_BYTES = 1 << 20
+
 
 class ValidationInputError(Exception):
     """Raised when the caller asked for something impossible."""
@@ -101,27 +110,6 @@ class _CsvParseFailure(Exception):
     def __init__(self, detail: str) -> None:
         super().__init__(detail)
         self.detail = detail
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _decode(data: bytes) -> tuple[str | None, str | None]:
-    """Decode submission bytes, tolerating a UTF-8 byte order mark.
-
-    Returns the text and, when decoding failed, a description of where it
-    failed so the filer can find the byte rather than hunt for it.
-    """
-    detail = "the bytes are not valid UTF-8"
-    for encoding in ("utf-8-sig", "utf-8"):
-        try:
-            return data.decode(encoding), None
-        except UnicodeDecodeError as exc:
-            detail = (
-                f"byte {exc.start} of the file is 0x{data[exc.start]:02X}, which is not valid UTF-8"
-            )
-    return None, detail
 
 
 def _describe_bad_characters(value: str) -> str:
@@ -373,11 +361,23 @@ class _Collector:
 
 
 # ---------------------------------------------------------------------------
-# Whole-file reading, and what the reader had to do to the bytes
+# Whole-file reading, one bounded chunk at a time
 # ---------------------------------------------------------------------------
+#
+# The reader walks the submission once, in chunks of _CHUNK_BYTES, and keeps
+# only what a report needs: the hash, whether a byte order mark led the file,
+# how many of each line ending it contains, whether anything non-whitespace
+# was ever decoded, and whether a quoted field was still open at the end.
+# Nothing proportional to the size of the filing is retained.
+#
+# Every fact collected here mirrors a definition that used to be written
+# against the whole text, and the mirroring is checked two ways in the test
+# suite: the adversarial corpus pins the observable behaviour end to end, and
+# tests/test_streaming.py compares each scanner against its whole-text
+# reference across deliberately tiny chunk sizes.
 
 
-def _line_ending_advisory(collector: _Collector, text: str) -> None:
+def _line_ending_advisory(collector: _Collector, crlf: int, lf: int, cr: int) -> None:
     """Note a file that does not settle on one ordinary line terminator.
 
     A bare carriage return counts on its own, not only in a mixture. It is the
@@ -385,9 +385,6 @@ def _line_ending_advisory(collector: _Collector, text: str) -> None:
     software does not, which means the same file can hold a different number
     of rows depending on what opens it.
     """
-    crlf = text.count("\r\n")
-    lf = text.count("\n") - crlf
-    cr = text.count("\r") - crlf
     kinds = {"CRLF": crlf, "LF (Unix)": lf, "CR (classic Mac)": cr}
     present = {name: count for name, count in kinds.items() if count}
     if len(present) < 2 and not cr:
@@ -407,7 +404,7 @@ def _line_ending_advisory(collector: _Collector, text: str) -> None:
     )
 
 
-def _bom_advisory(collector: _Collector, data: bytes) -> None:
+def _bom_advisory(collector: _Collector, had_bom: bool) -> None:
     """Note a byte order mark, which is a fact about the file, not about a row.
 
     Raised before the file is decoded, so it is reported whatever happens
@@ -416,7 +413,7 @@ def _bom_advisory(collector: _Collector, data: bytes) -> None:
     header check ignored it, because on the paths where the file never parsed
     there was no header check.
     """
-    if not data.startswith(_UTF8_BOM):
+    if not had_bom:
         return
     collector.advise(
         "ADV-BOM",
@@ -431,6 +428,239 @@ def _bom_advisory(collector: _Collector, data: bytes) -> None:
             "the byte order mark."
         ),
     )
+
+
+class _QuoteTrail:
+    """Whether a quoted CSV field is still open, tracked while text flows past.
+
+    This is the streaming mirror of `_unterminated_quote`, which remains in
+    this module as the reference definition of truncation. The two agree on
+    every input; `tests/test_streaming.py` walks thousands of generated
+    strings through both to hold them together.
+
+    `pending_close` carries the one case a per-chunk scan cannot settle on its
+    own: the previous character was a quotation mark inside a quoted field,
+    and whether it closes the field or merely escapes the next character
+    depends on what comes after it, which may not arrive until the next chunk.
+    """
+
+    __slots__ = ("at_field_start", "in_quotes", "pending_close")
+
+    def __init__(self) -> None:
+        self.at_field_start = True
+        self.in_quotes = False
+        self.pending_close = False
+
+    def feed(self, chunk: str) -> None:
+        # Fast path: nothing here can open or close a field, so the state
+        # moves only through the field separators at the tail.
+        if not self.in_quotes and not self.pending_close and '"' not in chunk:
+            if chunk:
+                self.at_field_start = chunk[-1] in ",\r\n"
+            return
+        for char in chunk:
+            self._step(char)
+
+    def _step(self, char: str) -> None:
+        if self.pending_close:
+            self.pending_close = False
+            if char == '"':
+                return  # an escaped quotation mark; still inside the field
+            self.in_quotes = False
+            self.at_field_start = False
+        if self.in_quotes:
+            if char == '"':
+                self.pending_close = True
+            return
+        if self.at_field_start and char == '"':
+            self.in_quotes = True
+            self.at_field_start = False
+        else:
+            self.at_field_start = char in ",\r\n"
+
+    def finish(self) -> bool:
+        """Resolve any pending close, then report whether a field stayed open."""
+        if self.pending_close:
+            # The reference implementation resolves a trailing quotation mark
+            # the same way: with no next character, the field closes.
+            self.pending_close = False
+            self.in_quotes = False
+            self.at_field_start = False
+        return self.in_quotes
+
+
+_BYTE_WHITESPACE = b" \t\n\r\x0b\f"
+
+# Long enough to hold any trailing UTF-8 sequence the incremental decoder may
+# still be buffering when the file stops mid-character, which is the only time
+# the flush needs to name an exact byte it can no longer see.
+_TAIL_BYTES = 16
+
+
+class _StreamScan:
+    """One pass over the raw bytes, keeping facts and discarding content."""
+
+    __slots__ = (
+        "_bom_settled",
+        "_bom_shift",
+        "_decoder",
+        "_hash",
+        "_prefix",
+        "_prev_char",
+        "_quote_trail",
+        "_tail",
+        "cr_total",
+        "crlf",
+        "decode_detail",
+        "had_bom",
+        "has_content",
+        "lf_total",
+        "size",
+        "tail_has_nonspace",
+    )
+
+    def __init__(self) -> None:
+        self._hash = hashlib.sha256()
+        self._decoder = codecs.getincrementaldecoder("utf-8-sig")()
+        self._quote_trail = _QuoteTrail()
+        self._prefix = bytearray()
+        self._tail = b""
+        self._prev_char = ""
+        self._bom_settled = False
+        self._bom_shift = 0
+        self.crlf = 0
+        self.cr_total = 0
+        self.lf_total = 0
+        self.size = 0
+        self.had_bom = False
+        self.has_content = False
+        self.tail_has_nonspace = False
+        self.decode_detail: str | None = None
+
+    def feed(self, raw: bytes) -> None:
+        self._hash.update(raw)
+        fed_before = self.size
+        self.size += len(raw)
+        if len(raw) >= _TAIL_BYTES:
+            self._tail = raw[-_TAIL_BYTES:]
+        else:
+            self._tail = (self._tail + raw)[-_TAIL_BYTES:]
+        self._bom_shift = self._settle_bom(raw)
+        if self.decode_detail is not None:
+            return
+        try:
+            text = self._decoder.decode(raw, final=False)
+        except UnicodeDecodeError as exc:
+            # Once the mark is stripped, the decoder's indices run from after
+            # it. On the call that completes the mark, those bytes came out of
+            # this chunk, so the shift is however many of them it supplied;
+            # on every later call the mark sits entirely behind the offset
+            # arithmetic and the shift is zero.
+            shown_at = exc.start + self._bom_shift
+            offending = raw[shown_at : shown_at + 1]
+            self._record_decode_error(fed_before + shown_at, offending)
+            return
+        if text:
+            self._absorb(text)
+
+    def finish(self) -> None:
+        """Close the stream: flush the decoder and settle the quote trail."""
+        if self.decode_detail is None:
+            try:
+                text = self._decoder.decode(b"", final=True)
+            except UnicodeDecodeError as exc:
+                # A character cut in half by the end of the file. The
+                # decoder's indices describe its buffered bytes, which are the
+                # last exc.end bytes of the file.
+                offset = self.size - exc.end
+                byte = self._tail[-exc.end] if exc.end <= len(self._tail) else ord("?")
+                self._record_decode_error(offset, bytes([byte]))
+            else:
+                if text:
+                    self._absorb(text)
+
+    def result(self) -> _Ingest:
+        return _Ingest(
+            sha256=self._hash.hexdigest(),
+            had_bom=self.had_bom,
+            size=self.size,
+            decode_detail=self.decode_detail,
+            has_content=self.has_content,
+            tail_nonempty=self.had_bom and self.size > 3,
+            tail_has_nonspace=self.tail_has_nonspace,
+            crlf=self.crlf,
+            lf=self.lf_total - self.crlf,
+            cr=self.cr_total - self.crlf,
+            truncated_quote=(self._quote_trail.finish() if self.decode_detail is None else False),
+        )
+
+    def _record_decode_error(self, offset: int, byte: bytes) -> None:
+        shown = byte[0] if byte else ord("?")
+        self.decode_detail = f"byte {offset} of the file is 0x{shown:02X}, which is not valid UTF-8"
+
+    def _settle_bom(self, raw: bytes) -> int:
+        """Decide whether the file leads with the mark.
+
+        Returns how many bytes of this chunk the decoder consumed as part of
+        the mark, which is the offset shift between its error indices and the
+        physical file for this call alone.
+        """
+        if self._bom_settled:
+            if self.had_bom and raw.translate(None, delete=_BYTE_WHITESPACE):
+                self.tail_has_nonspace = True
+            return 0
+        needed = 3 - len(self._prefix)
+        taken = raw[:needed]
+        self._prefix.extend(taken)
+        rest = raw[len(taken) :]
+        if len(self._prefix) < 3:
+            return 0  # still undecided; nothing has been stripped
+        self._bom_settled = True
+        self.had_bom = bytes(self._prefix) == _UTF8_BOM
+        if not self.had_bom:
+            return 0
+        if rest.translate(None, delete=_BYTE_WHITESPACE):
+            self.tail_has_nonspace = True
+        return len(taken)
+
+    def _absorb(self, text: str) -> None:
+        if not self.has_content and text.strip():
+            self.has_content = True
+        self.lf_total += text.count("\n")
+        self.cr_total += text.count("\r")
+        self.crlf += text.count("\r\n")
+        if self._prev_char == "\r" and text.startswith("\n"):
+            self.crlf += 1
+        self._prev_char = text[-1]
+        self._quote_trail.feed(text)
+
+
+@dataclass(frozen=True, slots=True)
+class _Ingest:
+    """What one pass over the file could say without holding the file."""
+
+    sha256: str
+    had_bom: bool
+    size: int
+    decode_detail: str | None
+    has_content: bool
+    tail_nonempty: bool
+    tail_has_nonspace: bool
+    crlf: int
+    lf: int
+    cr: int
+    truncated_quote: bool
+
+
+def _scan_stream(handle: io.BufferedIOBase) -> _Ingest:
+    scan = _StreamScan()
+    while True:
+        block = handle.read(_CHUNK_BYTES)
+        if not block:
+            break
+        scan.feed(block)
+    scan.finish()
+    return scan.result()
 
 
 def _unterminated_quote(text: str) -> bool:
@@ -1002,10 +1232,6 @@ def _column_dependent_rule_ids(specs: Sequence[RuleSpec]) -> list[str]:
     return [spec.id for spec in specs if spec.implemented and spec.id not in _HEADER_INDEPENDENT]
 
 
-def _reader(text: str) -> Iterator[list[str]]:
-    return iter(csv.reader(io.StringIO(text, newline="")))
-
-
 def _next_row(rows: Iterator[list[str]]) -> list[str] | None:
     try:
         return next(rows)
@@ -1055,114 +1281,13 @@ def _scan_rows(
     return data_rows
 
 
-def _width_message(profile: Profile, row: Sequence[str], expected_width: int) -> str:
-    message = (
-        f"Row has {len(row)} fields but the template defines {expected_width}. "
-        f"Every row needs exactly {expected_width} comma-separated values, in "
-        "the template's order."
-    )
-    if len(row) > expected_width:
-        return message + (
-            " A comma inside a value splits it into two fields unless the "
-            'value is wrapped in double quotation marks, so "Smith, J" counts '
-            "as one field and Smith, J counts as two."
-        )
-    missing = list(profile.header[len(row) :])
-    if missing:
-        message += " Counting from the left, the row stops before " + ", ".join(missing) + "."
-    return message
-
-
-def _blocked(collector: _Collector, detail: str, reason: str) -> None:
-    collector.add("QP001", detail)
-    collector.block_all_except(["QP001"], reason)
-
-
-def _empty_detail(data: bytes, text: str) -> str:
-    """Say which kind of nothing the file holds, since they are not the same."""
-    if data.startswith(_UTF8_BOM) and not data[len(_UTF8_BOM) :].strip():
-        tail = "and whitespace" if data[len(_UTF8_BOM) :] else ""
-        return (
-            f"The file holds nothing but a UTF-8 byte order mark {tail}, the "
-            "bytes EF BB BF. There is no header row and no data."
-        ).replace("  ", " ")
-    if not data:
-        return "The file is empty, with no bytes in it at all."
-    return (
-        f"The file holds {len(data)} bytes of whitespace and nothing else. "
-        "There is no header row and no data."
-    )
-
-
-def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
-    """Validate one submission held in memory."""
-    specs = specs_for(profile)
-    collector = _Collector(specs, profile)
-    collector.register_unimplemented()
-
-    report = Report(
-        tool=TOOL_NAME,
-        tool_version=__version__,
-        profile_id=profile.id,
-        profile_title=profile.title,
-        input_name=input_name,
-        input_sha256=_sha256(data),
-    )
-
-    collector.mark_evaluated("QP001")
-    # Before the decode, not after it. A byte order mark is a fact about the
-    # file, and it is still a fact when the file turns out not to be UTF-8.
-    _bom_advisory(collector, data)
-    text, decode_error = _decode(data)
-    if text is None:
-        _blocked(
-            collector,
-            (
-                f"The file is not valid UTF-8 text: {decode_error}. This tool "
-                "reads UTF-8, so it could not open the file and validated "
-                "nothing in it. Re-save the file as UTF-8 and run it again."
-            ),
-            "The submission could not be read, so this rule was never applied.",
-        )
-        return _finish(report, collector, 0)
-
-    if not text.strip():
-        _blocked(
-            collector,
-            f"{_empty_detail(data, text)} Nothing in it could be validated.",
-            "The submission could not be read, so this rule was never applied.",
-        )
-        return _finish(report, collector, 0)
-
-    _line_ending_advisory(collector, text)
-
-    if _unterminated_quote(text):
-        _blocked(
-            collector,
-            (
-                "The file ends in the middle of a quoted value: a double "
-                "quotation mark opens a field that is never closed before the "
-                "end of the file. That means the file was cut off, most often "
-                "by an interrupted export or a partial copy. Every value after "
-                "the opening quotation mark is unreliable, so no other rule "
-                "was applied. Re-export the file and check that it ends with a "
-                "complete final row."
-            ),
-            "The submission was cut off mid-value, so this rule was never applied.",
-        )
-        return _finish(report, collector, 0)
-
-    return _read_and_scan(report, collector, specs, profile, text)
-
-
 def _read_and_scan(
     report: Report,
     collector: _Collector,
     specs: Sequence[RuleSpec],
     profile: Profile,
-    text: str,
+    rows: Iterator[list[str]],
 ) -> Report:
-    rows = _reader(text)
     try:
         header = _next_row(rows)
     except _CsvParseFailure as failure:
@@ -1216,6 +1341,166 @@ def _read_and_scan(
         )
 
     return _finish(report, collector, data_rows)
+
+
+def _width_message(profile: Profile, row: Sequence[str], expected_width: int) -> str:
+    message = (
+        f"Row has {len(row)} fields but the template defines {expected_width}. "
+        f"Every row needs exactly {expected_width} comma-separated values, in "
+        "the template's order."
+    )
+    if len(row) > expected_width:
+        return message + (
+            " A comma inside a value splits it into two fields unless the "
+            'value is wrapped in double quotation marks, so "Smith, J" counts '
+            "as one field and Smith, J counts as two."
+        )
+    missing = list(profile.header[len(row) :])
+    if missing:
+        message += " Counting from the left, the row stops before " + ", ".join(missing) + "."
+    return message
+
+
+def _blocked(collector: _Collector, detail: str, reason: str) -> None:
+    collector.add("QP001", detail)
+    collector.block_all_except(["QP001"], reason)
+
+
+def _empty_detail(ingest: _Ingest) -> str:
+    """Say which kind of nothing the file holds, since they are not the same."""
+    if ingest.had_bom and not ingest.tail_nonempty:
+        return (
+            "The file holds nothing but a UTF-8 byte order mark , the "
+            "bytes EF BB BF. There is no header row and no data."
+        ).replace("  ", " ")
+    if ingest.had_bom and not ingest.tail_has_nonspace:
+        return (
+            "The file holds nothing but a UTF-8 byte order mark and "
+            "whitespace, the bytes EF BB BF. There is no header row and no "
+            "data."
+        )
+    if not ingest.size:
+        return "The file is empty, with no bytes in it at all."
+    return (
+        f"The file holds {ingest.size} bytes of whitespace and nothing else. "
+        "There is no header row and no data."
+    )
+
+
+def _validate_ingest(
+    ingest: _Ingest,
+    profile: Profile,
+    input_name: str,
+    reopen: Callable[[], io.BufferedIOBase],
+) -> Report:
+    """Drive the fail-closed decision tree from what one pass observed.
+
+    The tree and its order are exactly the ones `validate_bytes` has always
+    walked: the byte order mark before the decode question, the decode
+    question before emptiness, line endings before truncation, and rows only
+    once every earlier gate has opened. `reopen` supplies a fresh binary
+    stream positioned at the start for the row-by-row pass, which streams so
+    that memory does not grow with the filing.
+    """
+    specs = specs_for(profile)
+    collector = _Collector(specs, profile)
+    collector.register_unimplemented()
+
+    report = Report(
+        tool=TOOL_NAME,
+        tool_version=__version__,
+        profile_id=profile.id,
+        profile_title=profile.title,
+        input_name=input_name,
+        input_sha256=ingest.sha256,
+    )
+
+    collector.mark_evaluated("QP001")
+    # Before the decode, not after it. A byte order mark is a fact about the
+    # file, and it is still a fact when the file turns out not to be UTF-8.
+    _bom_advisory(collector, ingest.had_bom)
+
+    if ingest.decode_detail is not None:
+        _blocked(
+            collector,
+            (
+                f"The file is not valid UTF-8 text: {ingest.decode_detail}. This tool "
+                "reads UTF-8, so it could not open the file and validated "
+                "nothing in it. Re-save the file as UTF-8 and run it again."
+            ),
+            "The submission could not be read, so this rule was never applied.",
+        )
+        return _finish(report, collector, 0)
+
+    if not ingest.has_content:
+        _blocked(
+            collector,
+            f"{_empty_detail(ingest)} Nothing in it could be validated.",
+            "The submission could not be read, so this rule was never applied.",
+        )
+        return _finish(report, collector, 0)
+
+    _line_ending_advisory(collector, ingest.crlf, ingest.lf, ingest.cr)
+
+    if ingest.truncated_quote:
+        _blocked(
+            collector,
+            (
+                "The file ends in the middle of a quoted value: a double "
+                "quotation mark opens a field that is never closed before the "
+                "end of the file. That means the file was cut off, most often "
+                "by an interrupted export or a partial copy. Every value after "
+                "the opening quotation mark is unreliable, so no other rule "
+                "was applied. Re-export the file and check that it ends with a "
+                "complete final row."
+            ),
+            "The submission was cut off mid-value, so this rule was never applied.",
+        )
+        return _finish(report, collector, 0)
+
+    binary = reopen()
+    try:
+        # typeshed narrows the buffer more tightly than either BufferedReader
+        # or BytesIO can be expressed through one callable's return type.
+        text_stream = io.TextIOWrapper(binary, encoding="utf-8-sig", newline="")  # type: ignore[type-var]
+        rows = iter(csv.reader(text_stream))
+        return _read_and_scan(report, collector, specs, profile, rows)
+    finally:
+        binary.close()
+
+
+def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
+    """Validate one submission held in memory.
+
+    This and `validate_path` are two entrances to one implementation. The
+    bytes here already sit in memory by the caller's choice, so nothing is
+    saved by pretending otherwise; the pass still runs through the same
+    bounded scanner so both entrances observe identical behaviour.
+    """
+    ingest = _scan_stream(io.BytesIO(data))
+    return _validate_ingest(
+        ingest,
+        profile,
+        input_name,
+        lambda: io.BytesIO(data),
+    )
+
+
+def validate_path(path: str, profile: Profile) -> Report:
+    """Validate a submission on disk.
+
+    Two passes, each bounded: this one collects the file-level facts without
+    retaining content, and the second hands rows to the checker as they are
+    read. Peak memory grows with the longest row, not with the size of the
+    filing.
+    """
+    with open(path, "rb") as handle:
+        ingest = _scan_stream(handle)
+
+    def reopen() -> io.BufferedIOBase:
+        return open(path, "rb")
+
+    return _validate_ingest(ingest, profile, os.path.basename(path), reopen)
 
 
 def _parse_failure(
@@ -1284,12 +1569,3 @@ def _refuse_contradictions(report: Report) -> None:
             f"report cites {', '.join(orphaned)} in its findings but does not list "
             "the rule as evaluated, so the report contradicts itself"
         )
-
-
-def validate_path(path: str, profile: Profile) -> Report:
-    """Validate a submission on disk."""
-    import os
-
-    with open(path, "rb") as handle:
-        data = handle.read()
-    return validate_bytes(data, profile, os.path.basename(path))
