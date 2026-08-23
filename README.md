@@ -196,7 +196,9 @@ Registered but **not implemented**, and reported as unevaluated on every run:
 | QP032 | No published document states which columns form a row's unique reporting key, and the Commission's own worked example contains two rows that differ only in their reported amounts, so a legitimate repeat cannot be told from a duplicate. |
 
 These three are the honest half of the tool. They are visible in every report
-precisely so their absence is never mistaken for a clean result.
+precisely so their absence is never mistaken for a clean result. Each one's
+reason text also states its own promotion condition: the published evidence,
+and only that evidence, which would turn it into an implemented rule.
 
 ### The missing "Valid NAICS codes" list
 
