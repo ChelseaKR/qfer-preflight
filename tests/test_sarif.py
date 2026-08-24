@@ -73,9 +73,13 @@ def test_dirty_fixture_maps_severities_and_locations(
 
     results = [r for r in run["results"] if r["level"] != "none"]
     assert results, "the dirty fixture stopped producing findings"
+    rules_list = run["tool"]["driver"]["rules"]
     for result in results:
         assert result["level"] in {"error", "warning", "note"}
-        rule = next(r for r in run["tool"]["driver"]["rules"] if r["id"] == result["ruleId"])
+        rule_idx = result["ruleIndex"]
+        assert isinstance(rule_idx, int) and rule_idx >= 0
+        rule = rules_list[rule_idx]
+        assert rule["id"] == result["ruleId"]
         assert rule["defaultConfiguration"]["level"] == result["level"]
         # Every cited rule carries the citation and quote it stands on.
         assert "energy.ca.gov" in rule["helpUri"]
@@ -121,10 +125,13 @@ def test_advisories_stay_unseverityed_and_uncited_in_sarif(
     run = payload["runs"][0]
     advisory_results = [r for r in run["results"] if r["level"] == "none"]
     assert advisory_results, "the fixture stopped raising an advisory"
-    rules_by_id = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+    rules_list = run["tool"]["driver"]["rules"]
     for result in advisory_results:
         assert result["ruleId"].startswith("ADV-")
-        rule = rules_by_id[result["ruleId"]]
+        rule_idx = result["ruleIndex"]
+        assert isinstance(rule_idx, int) and rule_idx >= 0
+        rule = rules_list[rule_idx]
+        assert rule["id"] == result["ruleId"]
         assert rule["properties"]["advisory"] is True
         assert "no published CEC document" in rule["fullDescription"]["text"]
         # An advisory must not borrow the credibility of a citation.
