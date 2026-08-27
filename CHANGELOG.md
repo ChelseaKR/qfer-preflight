@@ -11,6 +11,8 @@ breaking change and is recorded here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-26
+
 ### Added
 
 - QP033, an error when a Company Number is not written as digits alone. All
@@ -121,6 +123,11 @@ breaking change and is recorded here.
   is the first thing to check.
 - The README described its registered-but-unevaluated rules as "these three"
   while listing four. QP034 joined the table and the sentence did not follow.
+- Every document in `docs/source-manifest.md` was re-downloaded on 2026-08-26,
+  the pre-release step `CONTRIBUTING.md` describes, and all thirteen hashes
+  still match. Only the retrieval dates moved. Notably the county table has
+  not changed, so the correction the Commission confirmed on 2026-08-26 is
+  not yet posted, exactly as staff said.
 
 ## [0.1.0] - 2026-08-18
 
@@ -272,5 +279,6 @@ endorsed by, or approved by the California Energy Commission.
   `O` has never appeared in any revision of the instructions to be removed
   from. No published text since says it is not accepted.
 
-[Unreleased]: https://github.com/ChelseaKR/qfer-preflight/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ChelseaKR/qfer-preflight/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ChelseaKR/qfer-preflight/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ChelseaKR/qfer-preflight/releases/tag/v0.1.0
