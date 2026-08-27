@@ -46,6 +46,66 @@ If sibling documents word the same requirement differently, key the quote by
 profile rather than picking one wording and applying it to all of them. See
 ADR 0002.
 
+## Proposing a rule without writing one
+
+You do not have to open a pull request. A proposal is welcome, and it is
+accepted or declined on one thing: whether it comes with the published text.
+
+Include all four of these:
+
+1. **The quote**, transcribed exactly from the document, defects included. Not
+   a paraphrase and not a summary of what the document means.
+2. **The document**, by name and URL. If it is one of the documents in
+   `docs/source-manifest.md`, say so; if it is not, say why it should be
+   citable at all.
+3. **The locator** inside it: the section heading, the field definition, the
+   footnote, the slide number. Precise enough that another person opens the
+   document and lands on the same passage.
+4. **What the check would do** on a value that violates it, and at what
+   severity.
+
+A proposal without a quote is declined, however sensible the check sounds.
+That is not a comment on the proposer; it is the rule the project runs on, and
+it applies to its own maintainers. If the published text you have in mind
+turns out not to exist, that is a real finding too, and it belongs in
+`docs/column-coverage.md` as a recorded search rather than nowhere.
+
+If the text exists but cannot be tested mechanically, say so and propose it as
+an unevaluated registration in the style of QP005. Those are as valuable as
+implemented rules, and they are the honest half of the tool.
+
+## Reporting a value the tool rejects that a published document calls valid
+
+**This is the most valuable defect report this project can receive.** It goes
+straight at ADR 0003 and ADR 0005: a validator that flags a value the
+Commission itself documents as valid is one that filers learn to ignore, and
+an ignored validator catches nothing.
+
+Include:
+
+1. **The value and the column**, and the profile you ran, plus the finding as
+   the tool printed it, rule identifier and all.
+2. **The published document that says the value is valid**, with URL, locator
+   and the quote. The same bar as a rule proposal, for the same reason.
+3. Whether the document is the same one the rule cites or a different one.
+   That distinction decides the outcome.
+
+The two outcomes differ:
+
+- **Same document, misread by the tool.** That is a plain defect. The rule is
+  wrong about what its own source says and gets fixed, with a test.
+- **A different published document.** Then two Commission documents disagree,
+  and ADR 0003 governs: the error is withdrawn, and the disagreement is
+  reported at warning or informational severity, citing the document that
+  permits the value, with both sources named. That is how QP024 and QP025
+  came to exist. It needs an ADR, not just a patch.
+
+One thing that cannot move a severity, however authoritative it is: an answer
+from Commission staff by email, or anything else a reader cannot open. ADR
+0009 records a case where all three open questions were answered that way and
+nothing changed, and explains why. Send it anyway. It gets recorded as
+correspondence, it may close a search, and it will never be cited.
+
 ## Rule identifiers are permanent
 
 An identifier is never renumbered and never reused for a different check.
