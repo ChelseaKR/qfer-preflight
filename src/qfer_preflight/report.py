@@ -116,7 +116,7 @@ _SARIF_SCHEMA = (
 _TOOL_URI = "https://github.com/ChelseaKR/qfer-preflight"
 
 
-def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Rule entries for everything the results will reference.
 
     Cited rules carry their citation and quote so the SARIF document stands
@@ -124,7 +124,13 @@ def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, str]]:
     description that no published CEC text stands behind them.
     """
     rules: list[dict[str, Any]] = []
-    index: dict[str, str] = {}
+    # SARIF 2.1.0 types result.ruleIndex as an integer: the zero-based
+    # position of the rule in runs[].tool.driver.rules. It carried the
+    # rule's id instead, which is what ruleId already says, so a consumer
+    # resolving a result to its rule by index got a string where the spec
+    # says a number. Recorded before each append, so it is the position by
+    # construction rather than a count kept in step by hand.
+    index: dict[str, int] = {}
 
     for rule_id in sorted({f.rule_id for f in report.findings}):
         spec = RULE_SPECS_BY_ID[rule_id]
@@ -132,7 +138,7 @@ def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, str]]:
         full_description = bound.citation.render()
         if bound.quote:
             full_description += f' Quoted from the source: "{bound.quote}"'
-        index[rule_id] = f"qfer/{rule_id}"
+        index[rule_id] = len(rules)
         rules.append(
             {
                 "id": rule_id,
@@ -150,7 +156,7 @@ def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, str]]:
         )
 
     for code in sorted({a.code for a in report.advisories}):
-        index[code] = f"qfer/{code}"
+        index[code] = len(rules)
         rules.append(
             {
                 "id": code,
