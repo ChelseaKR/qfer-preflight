@@ -36,7 +36,7 @@ test: ## Run the tests with the coverage floor
 	$(UV) run pytest
 
 no-dashes: ## Reject em dashes and en dashes in tracked text
-	@if git grep -n -P '\xe2\x80\x93|\xe2\x80\x94' -- \
+	@if git grep -n -P '\x{2013}|\x{2014}' -- \
 	    ':!*.lock' ':!uv.lock' > /tmp/qfer-dashes.txt 2>/dev/null; then \
 	  echo "Found em/en dashes in tracked files:"; cat /tmp/qfer-dashes.txt; exit 1; \
 	else \
