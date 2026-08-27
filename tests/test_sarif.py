@@ -22,7 +22,7 @@ import pytest
 from qfer_preflight.cli import EXIT_FINDINGS, EXIT_OK, main
 from qfer_preflight.engine import validate_bytes
 from qfer_preflight.profiles import PROFILES, get_profile
-from qfer_preflight.report import report_to_sarif
+from qfer_preflight.report import report_to_sarif, report_to_sarif_dict
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -153,3 +153,60 @@ def test_sarif_rendering_is_deterministic(tmp_path: Path) -> None:
     first = report_to_sarif(validate_bytes(payload, profile, "x.csv"))
     second = report_to_sarif(validate_bytes(payload, profile, "x.csv"))
     assert first == second
+
+
+def test_rule_index_is_an_integer_that_resolves_to_the_named_rule() -> None:
+    """`ruleIndex` must be the rule's position, not its name.
+
+    SARIF 2.1.0 types `result.ruleIndex` as an integer: the zero-based index
+    into `runs[].tool.driver.rules`. This rendering carried the rule's own
+    identifier there instead, so a consumer resolving a result to its rule by
+    index found a string where the standard promises a number, and the field
+    duplicated `ruleId` rather than doing its job. Shipped in v0.2.0.
+
+    The assertion that matters is the round trip: index into the rules array
+    and land on the rule the result names. A type check alone would pass an
+    integer that pointed at the wrong entry.
+    """
+    profile = get_profile("CEC-1306A-S1")
+    report = validate_bytes(
+        (FIXTURES / "1306a_s1_dirty.csv").read_bytes(),
+        profile,
+        "1306a_s1_dirty.csv",
+    )
+    run = report_to_sarif_dict(report)["runs"][0]
+    rules = run["tool"]["driver"]["rules"]
+    assert run["results"], "the dirty fixture must produce results to index"
+
+    for result in run["results"]:
+        index = result["ruleIndex"]
+        assert isinstance(index, int) and not isinstance(index, bool), (
+            f"ruleIndex for {result['ruleId']} is {type(index).__name__}, "
+            "and SARIF 2.1.0 types it as an integer"
+        )
+        assert 0 <= index < len(rules), f"ruleIndex {index} is outside rules[]"
+        assert rules[index]["id"] == result["ruleId"], (
+            f"ruleIndex {index} resolves to {rules[index]['id']!r}, "
+            f"but the result names {result['ruleId']!r}"
+        )
+
+
+def test_every_advisory_result_also_resolves_by_index() -> None:
+    """Advisories share the rules array, so they share the invariant."""
+    # A repeated header row is a QP007 error on CEC-1306B and CEC-1308C,
+    # whose instructions publish the words "extra headers", and an advisory on
+    # the other three, whose text does not. See ADR 0007. The advisory channel
+    # is what this test needs, so it uses one of the latter.
+    profile = get_profile("CEC-1306A-S1")
+    header = ",".join(profile.header)
+    body = f"{header}\r\n{header}\r\n".encode()
+    report = validate_bytes(body, profile, "repeated_header.csv")
+    run = report_to_sarif_dict(report)["runs"][0]
+    rules = run["tool"]["driver"]["rules"]
+    advisory_results = [r for r in run["results"] if r["ruleId"].startswith("ADV-")]
+    assert advisory_results, "expected a repeated header to raise an advisory"
+
+    for result in advisory_results:
+        index = result["ruleIndex"]
+        assert isinstance(index, int)
+        assert rules[index]["id"] == result["ruleId"]

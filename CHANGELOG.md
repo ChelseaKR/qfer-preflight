@@ -11,6 +11,20 @@ breaking change and is recorded here.
 
 ## [Unreleased]
 
+### Fixed
+
+- SARIF `result.ruleIndex` carried the rule's identifier instead of its
+  position. SARIF 2.1.0 types the field as an integer, the zero-based index
+  into `runs[].tool.driver.rules`, and this rendering emitted a string such as
+  `"qfer/QP010"`, which is what `ruleId` already says. A consumer resolving a
+  result to its rule by index found a string where the standard promises a
+  number. Shipped in 0.2.0 and reported from outside the project. The index is
+  now recorded as the array position at the moment each rule is appended, so
+  it is correct by construction rather than by a counter kept in step by hand.
+  Two tests assert the round trip, that indexing into the rules array lands on
+  the rule the result names, for findings and for advisories alike; a type
+  check alone would have accepted an integer pointing at the wrong entry.
+
 ## [0.2.0] - 2026-08-26
 
 ### Added
