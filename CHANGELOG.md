@@ -98,6 +98,29 @@ breaking change and is recorded here.
   their promotion condition in the reason text every report already prints:
   the exact published evidence that would turn each into an implemented rule,
   and why nothing less would do. No rule changed what it evaluates.
+- Correspondence with the Commission's Consumption Data Analytics Unit,
+  2026-08-17 to 2026-08-26, answered the three questions this project had
+  open, and moved nothing the tool reports. Staff confirmed that the "Valid
+  NAICS codes" list is not posted publicly and is not planned to be, that the
+  data dictionary holding it is an internal deliverable that will not be
+  shared, that the portal rejects a zero padded County Number such as `07`,
+  and that Customer Type `O` is accepted for Pacific Gas and Electric. QP018
+  stays unevaluated, and its reason now reports its promotion condition as
+  declined at the source rather than pending, which is a different state for a
+  reader to see. QP024 stays a warning and QP025 stays informational: the
+  answers are authoritative and they are private, and a citation in this
+  project names something a reader can open. QP024's shortfall against the
+  portal is now known and written down instead of merely unconfirmed. ADR 0009
+  records what was settled and what was deliberately not moved. The exchange
+  is listed in the README's sources and in the source manifest, marked not
+  citable, with no url, hash or retrieval date because it is not retrievable.
+- The manifest entry for the county table on the Energy Consumption Data Files
+  page now names a hash change waiting to happen: its two defective 2024 rows,
+  reported to the Commission and confirmed as a data transformation error, are
+  corrected but not yet posted. When that hash stops matching, the correction
+  is the first thing to check.
+- The README described its registered-but-unevaluated rules as "these three"
+  while listing four. QP034 joined the table and the sentence did not follow.
 
 ## [0.1.0] - 2026-08-18
 

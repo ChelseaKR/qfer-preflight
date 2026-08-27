@@ -116,6 +116,12 @@ not so behaviour can depend on them.
 - retrieved: 2026-08-22
 - cited by: no rule. Corroborates the county code set; see
   `docs/adr/0008-county-numbers-corroborated-by-a-second-cec-dataset.md`.
+- expected to change: yes, with a known cause. This file's two defective 2024
+  rows, which put county 33 on IMPERIAL and SAN DIEGO, were reported to the
+  Commission and confirmed on 2026-08-26 as a data transformation error,
+  corrected but not yet posted. When this hash stops matching, check that
+  correction first before treating the drift as a revision. Nothing cited
+  depends on this file.
 
 ### Energy Consumption Data Files, utility table
 
@@ -124,6 +130,20 @@ not so behaviour can depend on them.
 - retrieved: 2026-08-22
 - cited by: no rule. Read while closing part of the QP018 search; publishes no
   NAICS, customer type or rate class list.
+
+## Not a document
+
+Correspondence with the Commission's Consumption Data Analytics Unit,
+2026-08-17 to 2026-08-26, answered three questions this project had asked:
+where the "Valid NAICS codes" list is published, whether the portal accepts a
+zero padded County Number, and whether Customer Type `O` is still accepted.
+
+It carries no url, no hash and no retrieval date, because it is not
+retrievable. That is the point of the entry rather than an omission from it.
+No rule cites it, no rule may, and nothing in the manifest ritual applies to
+it. It is recorded because it closed searches that the README and three rule
+reasons describe as closed, and a reader is owed the reason. See
+`docs/adr/0009-authoritative-answers-that-cannot-be-cited.md`.
 
 ## Deliberately absent
 
