@@ -116,7 +116,9 @@ known before the evidence arrives:
 - QP018: a transcription job, not a research one, the moment someone supplies
   the portal data dictionary the workshop deck says exists (slide 44 promises
   it). The criteria should say what provenance such a transcription needs
-  before it may enter `codes.py`.
+  before it may enter `codes.py`. Note that the Commission said on 2026-08-26
+  that it does not plan to publish the list or the dictionary, so this is a
+  condition to hold open, not one to wait on. See ADR 0009.
 - QP005: implemented only if the Commission publishes a marker that
   distinguishes a totals row from a data row. Any heuristic is an invention.
 - QP032: implemented only if a published document names the columns forming a
@@ -262,7 +264,14 @@ Standing triggers to watch, using the Phase 1.2 manifest ritual:
 - The data dictionary the workshop deck promises. If it is published openly,
   QP018 becomes a transcription job, the Customer Type `O` question may gain
   the text ADR 0005 says would flip it, and the customer group and rate code
-  sets gain corroboration or contradiction worth an ADR either way.
+  sets gain corroboration or contradiction worth an ADR either way. The
+  Commission has said it does not plan to publish it, so treat this as a
+  watch item with no expected date rather than a pending one (ADR 0009).
+- A revision of the instructions or a later workshop deck that states a zero
+  padded County Number is not accepted. That is the only remaining route to
+  promoting QP024 into a QP013 error, and it is worth watching precisely
+  because the portal is known to reject the value while nothing published
+  says so.
 
 Intake checklist per new profile, each step leaving an artefact:
 
@@ -321,7 +330,7 @@ Intake checklist per new profile, each step leaving an artefact:
   (data due by the 15th of February, May, August and November): re-download
   the manifest documents shortly before each, compare hashes, and treat any
   drift as a priority fix with a changelog entry saying which revision changed.
-- Keep writing ADRs at the same density. The nine that exist are why the
+- Keep writing ADRs at the same density. The ten that exist are why the
   guardrails are load-bearing rather than decorative. Anything in this roadmap
   that changes an output contract, a channel, or a severity decision gets the
   next number.
@@ -337,7 +346,9 @@ relitigated from scratch:
 - Heuristics for totals rows (QP005) or duplicate keys (QP032). Both would
   guess where the Commission's own examples contradict the guess.
 - Substituting the federal Census NAICS list for QP018. No CEC text equates
-  the two, and the RE custom codes prove the sets differ.
+  the two, and the RE custom codes prove the sets differ. The Commission
+  confirmed on 2026-08-26 that its list also carries custom codes for certain
+  utilities, so the gap is wider than the RE series alone.
 - Auto-fixing filings. Editing a filing crosses from describing published
   text to judging it; the tool stops at description.
 - GUI or web surface. Accessibility and i18n rows in the standards table stay

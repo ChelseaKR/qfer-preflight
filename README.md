@@ -217,11 +217,11 @@ Registered but **not implemented**, and reported as unevaluated on every run:
 | Rule | Why it is not evaluated |
 |------|--------------------------|
 | QP005 | The instructions prohibit totals rows but publish no marker distinguishing a totals row from a data row. The workshop deck repeats the prohibition and illustrates it with a blank row, so it adds no marker either. Any test would be a heuristic guess. |
-| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public, and the search for a published copy is closed rather than unfinished. See below. Length is still checked by QP017. |
+| QP018 | The instructions require the NAICS code to match a list of "Valid NAICS codes", but the reference resolves to nothing public. The Commission has since said it does not plan to publish the list, so the search is closed and the promotion condition is declined rather than pending. See below. Length is still checked by QP017. |
 | QP032 | No published document states which columns form a row's unique reporting key, and the Commission's own worked example contains two rows that differ only in their reported amounts, so a legitimate repeat cannot be told from a duplicate. |
 | QP034 | The workshop deck says to "not include commas anywhere in the file". Taken literally that rejects every CSV the portal itself defines, since the comma is the delimiter; the narrower reading would be an interpretation, not a published test. Blank cells and non-numeric characters in the named fields are still checked by QP019, QP020 and QP033. |
 
-These three are the honest half of the tool. They are visible in every report
+These four are the honest half of the tool. They are visible in every report
 precisely so their absence is never mistaken for a clean result. Each one's
 reason text also states its own promotion condition: the published evidence,
 and only that evidence, which would turn it into an implemented rule.
@@ -258,6 +258,14 @@ somewhere. Here is where it was looked for and what turned up.
   common errors (e.g., NAICS code, county number, customer type, UDC name,
   etc.)", posted on the portal app landing pages, which require an account, or
   obtained by asking Commission staff.
+- So the Commission was asked. Staff answered on 2026-08-26 that the list is
+  not posted on a public website and that there is no plan to post it, because
+  it carries custom NAICS codes for certain utilities alongside CEC-defined
+  codes for internal use, and that the data dictionary holding it is an
+  internal deliverable they are not permitted to share publicly. For the
+  standard codes in the set that are neither custom nor CEC-defined, they
+  point to <https://www.census.gov/naics/>, which defines codes already known
+  to be in the set rather than supplying the set.
 
 It is also not safe to substitute the federal Census Bureau NAICS list. No CEC
 text says the phrase means that, and the Commission's own accepted set demonstrably
@@ -268,9 +276,12 @@ So QP018 stays registered and unevaluated, and the search for a published copy
 is closed rather than merely unfinished. The routes the Commission itself names
 are the portal app landing pages, which require an account, and a request to
 Commission staff. Neither produces a document published at a URL this project
-can cite. If you have the data dictionary from your portal app landing page,
-the list can be transcribed and the rule implemented; that is a transcription
-job, not a research one.
+can cite, and the Commission has now said it does not intend to change that.
+The rule's promotion condition is therefore declined at the source rather than
+pending, which is a different state for a reader to see and is what its reason
+text now reports. ADR 0009 records the exchange. If you have the data
+dictionary from your portal app landing page, the list can be transcribed and
+the rule implemented; that is a transcription job, not a research one.
 
 ### Where the published documents disagree with each other
 
@@ -304,6 +315,20 @@ whatever was intended, and the dataset is aggregate consumption reporting
 rather than a QFER filing, so it says nothing about what the portal accepts.
 The warning stands, on better evidence than it had.
 
+The Commission has since answered the question outright. Asked whether the
+portal accepts `07`, staff replied on 2026-08-26 that only integer values of
+1 to 58 and `00` are accepted, and that a single digit county number carrying a
+leading zero will generate an error. **QP024 is still not an error.** That
+reply is authoritative and it is private correspondence: a filer cannot open
+it, and neither can anyone else weighing whether to trust a finding. An error
+resting on a source the reader cannot check is, from outside, indistinguishable
+from an invented one, and holding that distinction is the whole of what this
+tool is for. So the severity stays where the published record puts it. What
+changed is that the warning is now known to be more lenient than the portal
+rather than merely unconfirmed, and that is said here instead of left to be
+inferred. Write the county number unpadded, which is what the warning already
+tells you to do. ADR 0009 records the exchange and the reasoning.
+
 **Customer Type `O`.** The CEC-1306A instructions list D, B and C. Slide 9 of
 the workshop deck lists "B (Bundled), D (Direct Access), C (Community Choice
 Aggregator), O (for BART, PGE only)". `O` produces a QP025 informational note
@@ -321,8 +346,14 @@ Customer." Two values. The pre-portal Excel form carries the same pair. So the
 sequence runs B and D, then B, D and C, and the July revision's net change was
 to **add** C. No revision has ever removed `O`, and nothing published since
 mentions it either way. ADR 0005 records the search and its outcome. The call
-flips only on published text stating that `O` is not accepted; the data
-dictionary slide 44 promises, which is still unpublished, would be that text.
+flips only on published text stating that `O` is not accepted. The data
+dictionary slide 44 promises would have been that text, and the Commission has
+since said it will not be published, so that route is closed. Asked directly,
+staff confirmed on 2026-08-26 that `O` is accepted, that only Pacific Gas and
+Electric report it, and that another agency reporting it draws a portal warning
+rather than a rejection. That is the posture QP025 already takes, reached from
+the published record alone. The note is unchanged in substance, because a rule
+that cites the deck goes on citing only the deck. ADR 0009 records it.
 
 ### Where the forms ask for different things
 
@@ -403,6 +434,19 @@ from secondary sources.
     NAICS code, customer type or rate class; its `SECTOR` is descriptive text
     such as "Agriculture and Water Pumping", and no six digit value appears in
     it anywhere. It grounds no rule and closes part of the QP018 search.
+
+One source in this list is not a document and cannot be cited by anything:
+
+- Correspondence with the Commission's Consumption Data Analytics Unit,
+  2026-08-17 to 2026-08-26, in reply to questions from this project about
+  where the "Valid NAICS codes" list is published, whether the portal accepts
+  a zero padded County Number, and whether Customer Type `O` is still
+  accepted. All three were answered. **No rule cites it and no rule ever
+  will**, because a citation here has to name something a reader can open, and
+  private email is not that. It is listed for the same reason the sources that
+  grounded nothing are listed: so a later reader knows the ground was covered.
+  What it settles, and what it deliberately does not move, is recorded in
+  ADR 0009.
 
 Published documents change. When they do, this tool is wrong until it is
 updated. Check the rule citations against the current published instructions
