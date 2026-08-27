@@ -11,6 +11,46 @@ breaking change and is recorded here.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/filer-guide.md`, a guide for the person doing the filing rather than
+  the person reading the code. A section per form carrying the published
+  header, a synthetic worked example, and the outcome the tool reports for
+  it; what each exit code means and how `1` and `2` differ; when `--strict`
+  is the right setting and why it fails on every file; what an unevaluated
+  rule and an advisory each mean for the decision to submit; how to read the
+  cell reference in a finding; and a worked failing run showing all three
+  severities, including why the zero padded County Number is a warning the
+  project knows to be more lenient than the portal.
+- `tests/test_filer_guide.py`, which stops the guide from claiming behaviour
+  the tool does not have. Every CSV block is extracted, matched against the
+  transcribed template headers, written to disk and run through the same
+  entry point a filer's run uses. The status, the number of rules evaluated,
+  the exact list of unevaluated rules, the advisory count and the exit code
+  the guide states are compared against the real ones, plain and under
+  `--strict`. Prose is not trusted either: every `QP` identifier and every
+  `ADV-` code named in the guide or the glossary must exist in the registry
+  and in the closed advisory code space.
+- `docs/glossary.md`, covering the two vocabularies a report mixes. The
+  Commission's terms, each quoted from the document that publishes it with
+  the section named: QFER from the program page title, DSP, UDC and LSE from
+  the instruction documents, and TEOR and UEG from the CEC-1308C Customer
+  Group list. NAICS is the entry that says what the project does when a term
+  is not defined in its sources: the four instruction PDFs and the workshop
+  deck use the abbreviation without ever expanding it, so the glossary states
+  that and supplies no expansion of its own. The tool's terms are defined
+  alongside them, including the collision worth knowing about, that a warning
+  here means the published record does not support calling a value wrong,
+  which is not what the portal means by the word.
+- `CONTRIBUTING.md` gains two recipes: how to propose a rule without writing
+  one, where a proposal without a transcribed quote is declined however
+  sensible the check sounds, and how to report a value the tool rejects that
+  a published document calls valid, which is the highest-value defect this
+  project can receive because it goes straight at ADR 0003. The second names
+  the two outcomes, a plain misreading defect or a documented disagreement
+  reported at warning severity, and repeats that correspondence never moves a
+  severity.
+
 ### Fixed
 
 - SARIF `result.ruleIndex` carried the rule's identifier instead of its

@@ -50,6 +50,15 @@ The JSON report conforms to a published schema,
 `schema_version`. Additive fields are minor changes; removing or retyping a
 field is breaking and moves the major version.
 
+If you are filing rather than reading code, start with
+[`docs/filer-guide.md`](docs/filer-guide.md): a section per form with a
+synthetic worked example you can run, what each exit code means, when
+`--strict` is the right setting, and what an unevaluated rule means for the
+decision to submit. Its examples are held against real runs by
+`tests/test_filer_guide.py`, so the guide cannot claim behaviour the tool does
+not have. Terms the Commission's documents use, and the ones this tool's
+reports use, are in [`docs/glossary.md`](docs/glossary.md).
+
 ## What it will not do
 
 The tool runs entirely on your machine. It opens no network connection, has no
