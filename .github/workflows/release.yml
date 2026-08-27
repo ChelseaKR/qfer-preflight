@@ -97,6 +97,7 @@ jobs:
       contents: write
     steps:
       - name: Re-resolve the tag object after verification
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
@@ -104,16 +105,36 @@ jobs:
           set -euo pipefail
           sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')"
           test -n "${sha}"
+          echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
           echo "verified tag object resolves to ${sha}"
 
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.tag.outputs.sha }}
         run: |
           set -euo pipefail
+          # The release notes are the signed tag's own annotation, so what is
+          # published is the text that was signed. `gh release create` refuses
+          # --notes-from-tag alongside --repo, and --repo is not optional here:
+          # this job never checks out repository content, by design, so it has
+          # no local repository for gh to infer. Read the annotation through
+          # the API instead and hand it over as the notes body.
+          gh api "repos/${GITHUB_REPOSITORY}/git/tags/${SHA}" --jq '.message' > notes.md
+          test -s notes.md
+
+          # A signed tag's message repeats the version on its first line. The
+          # release title already carries it, so drop the repeat and any blank
+          # lines left behind it.
+          if [ "$(head -n 1 notes.md)" = "${TAG}" ]; then
+            tail -n +2 notes.md | sed '/./,$!d' > notes.trimmed
+            mv notes.trimmed notes.md
+          fi
+          test -s notes.md
+
           gh release create "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${TAG}" \
-            --notes-from-tag \
+            --notes-file notes.md \
             --verify-tag

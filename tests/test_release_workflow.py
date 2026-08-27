@@ -174,6 +174,41 @@ def test_publishing_cannot_start_without_a_successful_verification() -> None:
     assert "needs: verify-tag" in WORKFLOW
 
 
+def test_the_release_notes_are_the_signed_tag_annotation() -> None:
+    """What is published is the text that was signed, not generated notes.
+
+    The v0.2.0 release failed here. `gh release create` refuses
+    --notes-from-tag together with --repo, and --repo is not optional in this
+    job: it never checks out repository content, so gh has no local repository
+    to infer one from. The annotation is read through the API instead. This
+    test exists because the combination is accepted by the YAML, rejected by
+    gh, and therefore invisible until a release is actually attempted.
+    """
+    create = _run_block("Create the GitHub release")
+    # The step explains the gh restriction in a comment, and a comment naming
+    # a flag is not the step using it. Assert against the commands alone.
+    commands = "\n".join(line for line in create.splitlines() if not line.lstrip().startswith("#"))
+    assert "--notes-from-tag" not in commands, (
+        "gh refuses --notes-from-tag alongside --repo, which this job requires"
+    )
+    assert "--repo" in commands, "the publishing job checks out nothing and must name the repo"
+    assert "--notes-file notes.md" in commands
+    assert "git/tags/${SHA}" in commands, (
+        "the notes must come from the tag object that verification resolved, "
+        "so the published text is the signed text"
+    )
+    assert "--verify-tag" in commands, "the tag must already exist on the remote"
+    assert "test -s notes.md" in commands, "empty release notes must stop the publish"
+
+
+def test_the_publishing_job_never_checks_out_repository_content() -> None:
+    """The separation the workflow header promises, asserted rather than trusted."""
+    publish = WORKFLOW[WORKFLOW.index("  publish:") :]
+    assert "actions/checkout" not in publish, (
+        "the job that can write must never check out content it could publish"
+    )
+
+
 def test_only_the_publishing_job_can_write() -> None:
     """The job that reads repository content has no write permission at all."""
     assert WORKFLOW.count("contents: write") == 1
