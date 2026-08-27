@@ -1,6 +1,6 @@
 [project]
 name = "qfer-preflight"
-version = "0.1.0"
+version = "0.2.0"
 description = "Offline pre-submission validator for California Energy Commission QFER Consumption CSV filings, where every finding cites the published rule it came from."
 readme = "README.md"
 requires-python = ">=3.12"
