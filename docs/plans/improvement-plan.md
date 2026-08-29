@@ -156,10 +156,14 @@ restored, and watched to pass.
 2. **Close the Company Number digit gap.** Add adversarial cases for a
    Company Number written in Unicode digits, asserting QP033 fires. Closes the
    live half of 3.
-3. **Enforce the `[0-9]` convention at source.** A `make no-unicode-digits`
-   target and a test built the way `test_dash_gate.py` is built: assert the
-   pattern against a real `\d` occurrence rather than trusting it by eye.
-   Closes the systemic half of 3.
+3. **Enforce the `[0-9]` convention at source.** Built the way
+   `test_dash_gate.py` is built: assert the matcher against a pattern it must
+   catch and one it must not, rather than trusting it by eye. It landed as
+   `tests/test_digit_class_convention.py` rather than a make target, because
+   the convention concerns Python regexes alone and `make test` already runs
+   it; a second implementation in the Makefile would be one more thing that
+   can drift. It reads the AST, since every `\d` in the repository today sits
+   in prose explaining why not to use it. Closes the systemic half of 3.
 4. **Make the text gates fail closed.** Teach `no-dashes` to tell exit 1 from
    exit 128 and fail on the latter, and stop using a fixed temp path. Closes 4.
 5. **Widen the type check.** Add `scripts` to mypy's files and fix what falls
