@@ -122,11 +122,16 @@ _COMPANY_NUMBER_QUOTE: Mapping[str, str] = {
         "The identification number assigned by CEC staff. Column A, numeric "
         "data type, or text data type if Company Number begins with leading zero."
     ),
-    # Schedule 2 shares the Schedule 1 document, and the wording there is the
-    # same field definition reprinted in it.
+    # Schedule 2 shares the Schedule 1 document but publishes its own field
+    # definition, under "CEC-1306A Schedule 2 Instructions". It words the
+    # leading zero clause differently from Schedule 1's and adds a sentence
+    # pointing back at Schedule 1. Transcribed from that section, not reused
+    # from Schedule 1's.
     "CEC-1306A-S2": (
-        "The identification number assigned by CEC staff. Column A, numeric "
-        "data type, or text data type if Company Number begins with leading zero."
+        "The identification number assigned by CEC staff. This is the same "
+        "Company Number found in CEC-1306A Schedule 1. Column A, numeric data "
+        "type unless your Company Number contains a leading zero, in which "
+        "case, text data type."
     ),
     "CEC-1306B": (
         "The identification number assigned by CEC staff. Please use the same "
