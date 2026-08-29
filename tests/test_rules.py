@@ -52,6 +52,36 @@ def test_rule_ids_are_unique() -> None:
     assert len(ids) == len(set(ids))
 
 
+#: The identifiers inside the registry's span that no rule uses, and that no
+#: rule ever has: searched for across every commit, branch, tag and dangling
+#: object on 2026-08-29 and found nowhere. ADR 0010 records that, records that
+#: why the sequence was spaced this way is not on the record, and decides the
+#: six stay unallocated. The two tests below stop that record and this registry
+#: from drifting apart in either direction.
+UNALLOCATED_RULE_IDS = frozenset({"QP008", "QP009", "QP026", "QP027", "QP028", "QP029"})
+
+ADR_0010 = (
+    Path(__file__).parent.parent / "docs" / "adr" / "0010-the-unallocated-rule-identifiers.md"
+)
+
+
+def test_the_gaps_in_the_identifier_sequence_are_the_ones_adr_0010_records() -> None:
+    allocated = {spec.id for spec in RULE_SPECS}
+    numbers = sorted(int(spec.id[2:]) for spec in RULE_SPECS)
+    span = {f"QP{number:03d}" for number in range(numbers[0], numbers[-1] + 1)}
+    assert span - allocated == UNALLOCATED_RULE_IDS, (
+        "the unallocated identifiers are no longer the ones ADR 0010 records. "
+        "Filling one of them, or opening a new gap, is a change to the "
+        "identifier space and needs the ADR amended to say so."
+    )
+
+
+def test_adr_0010_names_every_unallocated_identifier() -> None:
+    text = ADR_0010.read_text(encoding="utf-8")
+    for rule_id in sorted(UNALLOCATED_RULE_IDS):
+        assert rule_id in text, f"ADR 0010 does not name {rule_id}"
+
+
 def test_every_rule_carries_a_citation_with_a_real_url() -> None:
     for profile in PROFILES.values():
         for rule in rules_for(profile):

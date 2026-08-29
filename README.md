@@ -188,7 +188,11 @@ job is to match what the portal expects, not what the template ought to say.
 
 Run `qfer-preflight rules` for the registry with full citations. Rule
 identifiers are permanent: an identifier is never renumbered and never reused
-for a different check. Every column of every published template is mapped to
+for a different check. The sequence has six holes in it, QP008, QP009 and
+QP026 through QP029, and none of the six has ever been allocated to anything:
+no rule was withdrawn and none was lost. Why the sequence was spaced that way
+is not on the record, and ADR 0010 says so rather than supplying a reason it
+cannot source. Every column of every published template is mapped to
 the rules that touch it in `docs/column-coverage.md`, and a test holds that
 map against the registry.
 

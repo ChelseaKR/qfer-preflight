@@ -207,6 +207,14 @@ def _always(_: Profile) -> bool:
 
 # ---------------------------------------------------------------------------
 # Structural rules
+#
+# The identifier sequence has six holes in it: QP008, QP009, and QP026 through
+# QP029. None of them has ever been allocated to anything, in any commit on any
+# branch in this repository's history, so no rule was withdrawn and none was
+# lost. Why the sections were originally spaced to leave that headroom is not
+# recorded anywhere, and ADR 0010 says so rather than inventing a reason. The
+# six stay unallocated; new rules take the next unused identifier above the
+# highest one. tests/test_rules.py holds that list against this registry.
 # ---------------------------------------------------------------------------
 
 RULE_SPECS: tuple[RuleSpec, ...] = (
@@ -296,7 +304,8 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         tags=("structural",),
     ),
     # -----------------------------------------------------------------------
-    # Field rules
+    # Field rules. Begins at QP010, leaving QP008 and QP009 unallocated; see
+    # ADR 0010.
     # -----------------------------------------------------------------------
     RuleSpec(
         id="QP010",
@@ -515,7 +524,8 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
         tags=("field", "codeset"),
     ),
     # -----------------------------------------------------------------------
-    # Cross-row rules
+    # Cross-row rules. Begins at QP030, leaving QP026 through QP029
+    # unallocated; see ADR 0010.
     # -----------------------------------------------------------------------
     RuleSpec(
         id="QP030",
