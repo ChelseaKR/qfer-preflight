@@ -35,10 +35,22 @@ _batch_validator = jsonschema.Draft202012Validator(
 )
 
 
-def _run_json(argv: list[str], capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
+def _run_json(
+    argv: list[str], capsys: pytest.CaptureFixture[str], expect: int = EXIT_OK
+) -> dict[str, Any]:
+    """Run the CLI and parse its JSON, holding it to one exit code.
+
+    `expect` is not optional in spirit. This used to assert
+    `code in (EXIT_OK, EXIT_FINDINGS, EXIT_USAGE)`, which is every value
+    `main` can return: `cli.main` dispatches to three subcommands and each
+    returns only one of those three constants. The assertion was true for
+    every possible run, so the four tests routing through here had no
+    exit-code coverage at all and would not have noticed a batch that started
+    reporting a usage error.
+    """
     code = main(argv)
-    assert code in (EXIT_OK, EXIT_FINDINGS, EXIT_USAGE)
     payload: dict[str, Any] = json.loads(capsys.readouterr().out)
+    assert code == expect, f"expected exit {expect}, got {code}"
     return payload
 
 
@@ -78,6 +90,7 @@ def test_every_embedded_report_matches_its_single_run_byte_for_byte(
     payload = _run_json(
         ["check", str(clean), str(dirty), "--profile", "CEC-1306A-S1", "--format", "json"],
         capsys,
+        expect=EXIT_FINDINGS,
     )
     results = {entry["input_name"]: entry for entry in payload["results"]}  # type: ignore[index]
 
@@ -184,6 +197,12 @@ def test_batch_entry_requires_exactly_one_of_report_or_problem() -> None:
     )
     with pytest.raises(ValueError):
         BatchEntry(input_name="x")  # type: ignore[call-arg]
+
+    # The name says "exactly one", and neither was the only half being tested.
+    # An entry carrying both is the ambiguous case the constructor's own error
+    # message names, and nothing here reached it.
+    with pytest.raises(ValueError):
+        BatchEntry(input_name="x", report=report, problem="why")
 
     entry = BatchEntry(input_name="x", report=report)
     assert entry.to_dict()["outcome"] == "validated"

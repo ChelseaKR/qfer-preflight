@@ -42,7 +42,11 @@ jobs:
           chmod +x gitleaks
 
       - name: Scan the working tree and history
-        run: ./gitleaks detect --source . --redact --no-banner --exit-code 1
+        # Runs the make target rather than repeating its command here, so the
+        # gate a developer can run and the gate CI enforces cannot drift apart.
+        run: make secrets
+        env:
+          GITLEAKS: ./gitleaks
 
   sast:
     name: Static analysis
@@ -64,7 +68,7 @@ jobs:
         run: uv sync --locked
 
       - name: Run bandit over the package
-        run: uv run bandit -q -c pyproject.toml -r src
+        run: make security
 
   dependency-audit:
     name: Dependency audit
@@ -86,10 +90,6 @@ jobs:
         run: uv sync --locked
 
       - name: Audit the locked dependencies with pip-audit
-        env:
-          NO_COLOR: "1"
-        run: |
-          set -euo pipefail
-          uv export --locked --no-emit-project --no-header --no-hashes \
-            --no-annotate --format requirements-txt > requirements-audit.txt
-          uv run pip-audit --strict -r requirements-audit.txt
+        # `make audit` existed and no workflow ran it, while this step inlined
+        # the same four commands. Either could rot without the other noticing.
+        run: make audit

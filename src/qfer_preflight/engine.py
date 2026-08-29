@@ -303,6 +303,15 @@ class _Collector:
             self.mark_not_evaluated(spec.id, reason)
 
     @property
+    def registered(self) -> frozenset[str]:
+        """Every rule this profile applies, implemented or not.
+
+        The partition `_refuse_contradictions` enforces is over this set: each
+        of these has to end up in exactly one of the two output lists.
+        """
+        return frozenset(self._specs)
+
+    @property
     def evaluated(self) -> list[str]:
         return sorted(self._evaluated - set(self._not_evaluated))
 
@@ -1581,24 +1590,53 @@ def _finish(report: Report, collector: _Collector, rows_read: int) -> Report:
     report.rules_not_evaluated = collector.not_evaluated
     report.advisories = collector.advisories
     report.rows_read = rows_read
-    _refuse_contradictions(report)
+    _refuse_contradictions(report, collector.registered)
     return report
 
 
-def _refuse_contradictions(report: Report) -> None:
-    """No report may cite a rule it also says it never applied.
+def _refuse_contradictions(report: Report, registered: frozenset[str]) -> None:
+    """Hold the report to what `model.Report` says a report is.
 
-    Every gating path in this module blocks rules and reports findings from
-    the same collector, so the two lists agree by construction. This is the
-    check that keeps them agreeing after the next change to that gating: a
-    finding attributed to a rule sitting in the unevaluated list would be a
-    report contradicting itself in the reader's favour, claiming a check it
-    also admits it did not run.
+    Three ways a report can contradict itself, all of them resolved in the
+    reader's favour and therefore all of them worse than a crash:
+
+    1. It cites a rule in a finding that it does not list as evaluated,
+       claiming a check it also admits it did not run.
+    2. It lists the same rule as evaluated and as not evaluated, saying both
+       at once about one check.
+    3. It applies a rule to this profile and then mentions it in neither list,
+       so the rule leaves no trace in the output and a reader cannot tell it
+       was meant to run at all.
+
+    `model.Report` states the second and third as one invariant: every rule
+    applicable to a profile ends up in exactly one of `rules_evaluated` or
+    `rules_not_evaluated`. Every gating path in this module satisfies it by
+    construction today, through two independent lines in `_Collector`. Either
+    of those can be removed without any input behaving differently, which is
+    the reason the invariant is asserted here rather than left to them.
     """
     evaluated = set(report.rules_evaluated)
+    not_evaluated = {item.rule_id for item in report.rules_not_evaluated}
+
     orphaned = sorted({f.rule_id for f in report.checked_findings() if f.rule_id not in evaluated})
-    if orphaned:  # pragma: no cover - a bug in the gating, not reachable input
+    if orphaned:
         raise ValueError(
             f"report cites {', '.join(orphaned)} in its findings but does not list "
             "the rule as evaluated, so the report contradicts itself"
+        )
+
+    both = sorted(evaluated & not_evaluated)
+    if both:
+        raise ValueError(
+            f"report lists {', '.join(both)} as evaluated and as not evaluated. A "
+            "rule is one or the other, and a reader given both learns nothing "
+            "about whether the check ran"
+        )
+
+    unaccounted = sorted(registered - evaluated - not_evaluated)
+    if unaccounted:
+        raise ValueError(
+            f"report applies {', '.join(unaccounted)} to this profile but lists the "
+            "rule as neither evaluated nor unevaluated, so the report is silent "
+            "about a check the reader has no way to ask after"
         )

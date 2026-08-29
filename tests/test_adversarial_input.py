@@ -78,6 +78,7 @@ CASES: dict[str, bytes] = {
     "semicolon separated": f"{HEADER}\n{GOOD_ROW}\n".replace(",", ";").encode(),
     "fullwidth digit month": f"{HEADER}\n101,2025,\uff11,34,B,A1,925190,1,1,1\n".encode(),
     "arabic-indic digit year": f"{HEADER}\n101,\u0662\u0660\u0662\u0665,1,34,B,A1,925190,1,1,1\n".encode(),
+    "fullwidth digit company number": f"{HEADER}\n\uff11\uff10\uff11,2025,1,34,B,A1,925190,1,1,1\n".encode(),
     "non-breaking space in a code": f"{HEADER}\n101,2025,1,34,B\xa0,A1,925190,1,1,1\n".encode(),
     "field over the csv size limit": f"{HEADER}\n101,2025,1,34,B,{'A' * 200_000},925190,1,1,1\n".encode(),
 }
@@ -504,6 +505,12 @@ def test_advisories_are_capped_rather_than_repeated_for_every_row() -> None:
         ("101,\u0662\u0660\u0662\u0665,1,34,B,A1,925190,1,1,1", "QP010"),
         ("101,2025,1,34,B,A1,925190,\u0661\u0662,1,1", "QP020"),
         ("101,2025,\u0665,34,B,A1,925190,1,1,1", "QP011"),
+        # Company Number arrived with QP033, after the four cases above were
+        # written, and no case followed it. `_COMPANY_NUMBER_DIGITS` could be
+        # changed from "[0-9]+" to "\\d+" with the whole suite staying green,
+        # which is the exact regression this file exists to prevent.
+        ("\uff11\uff10\uff11,2025,1,34,B,A1,925190,1,1,1", "QP033"),
+        ("\u0661\u0660\u0661,2025,1,34,B,A1,925190,1,1,1", "QP033"),
     ],
 )
 def test_a_unicode_digit_is_not_accepted_as_a_number(row: str, expected_rule: str) -> None:
@@ -586,3 +593,15 @@ def test_a_profile_without_the_column_is_unaffected() -> None:
     report = _check(f"{header}\n=1,2025,1,SCE,Other,34,1,1,1\n", PROFILE_1306B)
     assert "ADV-FORMULA-CELL" in _advisory_codes(report)
     assert "QP014" not in _rule_ids(report)
+
+
+def test_a_unicode_digit_company_number_is_named_as_such() -> None:
+    """QP033 must say what is wrong, not merely fire.
+
+    A Company Number of fullwidth digits looks correct in a spreadsheet and is
+    not a number to any portal. The finding has to name the character, because
+    the whole difficulty is that the reader cannot see it.
+    """
+    report = _check(f"{HEADER}\n\uff11\uff10\uff11,2025,1,34,B,A1,925190,1,1,1\n")
+    message = next(f.message for f in report.findings if f.rule_id == "QP033")
+    assert "U+FF11" in message, message
