@@ -112,6 +112,13 @@ An identifier is never renumbered and never reused for a different check.
 Reports produced by older versions must stay readable. Retiring a rule keeps
 its identifier and marks it retired.
 
+New rules take the next unused identifier above the highest allocated one. Do
+not number into the six gaps in the sequence, QP008, QP009 and QP026 through
+QP029; ADR 0010 records what is known about them, which includes that none of
+them has ever been used and that the reason for the spacing is not on the
+record. A test in `tests/test_rules.py` holds that list against the registry,
+so changing the identifier space fails the build until the ADR is amended.
+
 ## Transcription conventions
 
 Published text is copied exactly, defects included. The only normalisation is

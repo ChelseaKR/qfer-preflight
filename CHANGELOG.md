@@ -13,6 +13,23 @@ breaking change and is recorded here.
 
 ### Added
 
+- `docs/adr/0010-the-unallocated-rule-identifiers.md`, which answers a question
+  the repository had left open: the rule sequence skips QP008, QP009 and QP026
+  through QP029, next to a standing promise that identifiers are permanent and
+  are never renumbered or reused, and nothing said whether those six were
+  withdrawn, lost, or never written. Every commit, branch, tag and dangling
+  object in the history was searched for the six strings and none of them has
+  ever appeared, so no rule was withdrawn and none was lost. The gaps line up
+  with the registry's three sections, each of which began on a round number in
+  the first commit and was left with headroom above its last rule. Why it was
+  spaced that way is not recorded anywhere, and the ADR says that instead of
+  supplying a reason it cannot source. The six stay unallocated, and new rules
+  go on taking the next unused identifier above the highest one.
+- Two tests in `tests/test_rules.py` that hold the ADR and the registry
+  together: one derives the unallocated set from `RULE_SPECS` and compares it
+  to the six recorded, the other checks the ADR names each of them. Filling a
+  gap or opening a new one now fails the build until the record is amended.
+
 - `docs/filer-guide.md`, a guide for the person doing the filing rather than
   the person reading the code. A section per form carrying the published
   header, a synthetic worked example, and the outcome the tool reports for
