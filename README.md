@@ -1,9 +1,12 @@
 # qfer-preflight
 
 A deterministic, offline pre-submission validator for California Energy
-Commission **QFER Consumption** CSV filings. You run it on your own data,
-before you upload anything, and it tells you what a published rule says is
-wrong with your file.
+Commission **QFER Consumption** CSV filings. QFER is Quarterly Fuel and
+Energy Reporting; the expansion comes from the Commission's program page
+title, and [`docs/glossary.md`](docs/glossary.md) records where it and every
+other term here are published. You run it on your own data, before you
+upload anything, and it tells you what a published rule says is wrong with
+your file.
 
 Every finding cites the published document it came from. Nothing else is
 checked, and anything the tool cannot check is reported as **not evaluated**
