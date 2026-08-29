@@ -153,3 +153,83 @@ def test_the_readme_lists_every_supported_profile() -> None:
     text = readme()
     for name in PROFILES:
         assert f"`{name}`" in text, f"{name} is supported but never named"
+
+
+# ---------------------------------------------------------------------------
+# Which table a rule is in, not merely that it is in one.
+#
+# `test_every_registered_rule_appears_in_the_readme` and
+# `test_every_unevaluated_rule_has_a_row_explaining_why` both look for
+# `| QP0NN |` anywhere in the file. The README has two rule tables, and the
+# split between them is the claim a reader acts on: the first says these
+# checks run, the second says these four deliberately do not.
+#
+# Nothing read the split. QP005's row was moved out of the unevaluated table
+# and into the implemented one, so the README told a filer that totals rows
+# are checked when no rule evaluates them, and `pytest -q` reported 505
+# passed. `CLAUDE.md` says never let an unevaluated rule report as passed;
+# ADR 0001 makes it the repository's first contract. The engine honours it.
+# The README could say the opposite and no gate objected.
+#
+# So the membership of both tables is derived from `implemented`.
+# ---------------------------------------------------------------------------
+
+IMPLEMENTED_TABLE_INTRO = "Implemented and grounded in published text:"
+UNEVALUATED_TABLE_INTRO = "Registered but **not implemented**, and reported as unevaluated"
+
+_RULE_ROW = re.compile(r"^\| (QP[0-9]{3}) \|", re.MULTILINE)
+
+
+def _table_after(intro: str) -> str:
+    """The markdown table introduced by `intro`, up to the blank line after it.
+
+    Located by the sentence that introduces it rather than by position, so a
+    reordered README fails loudly here instead of silently reading the wrong
+    table.
+    """
+    text = README.read_text(encoding="utf-8")
+    assert intro in text, f"the README no longer introduces a table with {intro!r}"
+    body = text[text.index(intro) + len(intro) :]
+    rows: list[str] = []
+    started = False
+    for line in body.splitlines():
+        if line.startswith("|"):
+            started = True
+            rows.append(line)
+        elif started:
+            break
+    assert rows, f"no table follows {intro!r} in the README"
+    return "\n".join(rows)
+
+
+def _ids_in_table(intro: str) -> set[str]:
+    return set(_RULE_ROW.findall(_table_after(intro)))
+
+
+def test_the_implemented_table_is_exactly_the_implemented_rules() -> None:
+    listed = _ids_in_table(IMPLEMENTED_TABLE_INTRO)
+    expected = {spec.id for spec in RULE_SPECS if spec.implemented}
+    assert listed == expected, (
+        "the README's implemented table does not match the registry. "
+        f"listed but not implemented: {sorted(listed - expected)}; "
+        f"implemented but not listed: {sorted(expected - listed)}. A rule shown "
+        "as implemented when it is not tells a filer a check runs that does not"
+    )
+
+
+def test_the_unevaluated_table_is_exactly_the_unevaluated_rules() -> None:
+    listed = _ids_in_table(UNEVALUATED_TABLE_INTRO)
+    expected = {spec.id for spec in RULE_SPECS if not spec.implemented}
+    assert listed == expected, (
+        "the README's unevaluated table does not match the registry. "
+        f"listed but implemented: {sorted(listed - expected)}; "
+        f"unevaluated but not listed: {sorted(expected - listed)}"
+    )
+
+
+def test_no_rule_is_listed_in_both_tables() -> None:
+    """The two assertions above cannot both hold for a rule in both tables, but
+    a rule in both is worth its own message: it is the shape a careless move
+    leaves behind, and the reader sees a contradiction rather than a gap."""
+    both = sorted(_ids_in_table(IMPLEMENTED_TABLE_INTRO) & _ids_in_table(UNEVALUATED_TABLE_INTRO))
+    assert not both, f"the README lists {both} as both implemented and unevaluated"

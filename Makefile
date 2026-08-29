@@ -1,9 +1,20 @@
 # Every target here is what CI runs. `make verify` is the whole gate.
 .DEFAULT_GOAL := help
-.PHONY: help sync fmt fmt-check lint typecheck security audit secrets test no-dashes verify clean
+.PHONY: help sync lock lock-check fmt fmt-check lint typecheck security audit secrets test no-dashes verify clean
 
 UV ?= uv
 GITLEAKS ?= gitleaks
+
+# Every gate runs through `uv run --locked`, never a bare `uv run`. A bare
+# `uv run` performs an implicit sync: when `uv.lock` no longer agrees with
+# `pyproject.toml` it rewrites the lockfile in place and carries on. That is a
+# gate repairing the artifact it was supposed to be checked against. Measured
+# here on 2026-08-29: a dependency was added to `pyproject.toml` without
+# relocking, `make lint` printed "All checks passed!", and `uv.lock` changed
+# from a376da4 to fa891d8 in the working tree. Green gate, rewritten artifact,
+# and the committed bytes stay stale until somebody notices a dirty file.
+# `--locked` makes that case an error instead.
+UVRUN := $(UV) run --locked
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -12,25 +23,37 @@ help: ## Show this help
 sync: ## Install the locked dependency set
 	$(UV) sync --locked
 
+lock: ## Rewrite uv.lock from pyproject.toml. The only target allowed to.
+	$(UV) lock
+
+lock-check: ## Fail if uv.lock has drifted from pyproject.toml
+# `uv sync --locked` cannot serve as this gate. It installs from uv.lock
+# WITHOUT reading pyproject.toml, so by construction it cannot notice that the
+# two disagree, and it exits 0 on a drifted lock. `uv lock --check` is the gate.
+#
+# It runs first in `verify`, before any target that could rewrite the lock.
+# `--offline` keeps it from reaching the network to decide.
+	$(UV) lock --check --offline
+
 fmt: ## Format the code
-	$(UV) run ruff format .
+	$(UVRUN) ruff format .
 
 fmt-check: ## Check formatting without changing anything
-	$(UV) run ruff format --check .
+	$(UVRUN) ruff format --check .
 
 lint: ## Lint
-	$(UV) run ruff check .
+	$(UVRUN) ruff check .
 
 typecheck: ## Type check
-	$(UV) run mypy
+	$(UVRUN) mypy
 
 security: ## Static security scan of the package
-	$(UV) run bandit -q -c pyproject.toml -r src
+	$(UVRUN) bandit -q -c pyproject.toml -r src
 
 audit: ## Audit locked dependencies for known vulnerabilities (needs network)
 	@NO_COLOR=1 $(UV) export --locked --no-emit-project --no-header --no-hashes \
 	  --no-annotate --format requirements-txt > requirements-audit.txt
-	$(UV) run pip-audit --strict -r requirements-audit.txt
+	$(UVRUN) pip-audit --strict -r requirements-audit.txt
 	@rm -f requirements-audit.txt
 
 secrets: ## Scan the working tree and the history for secrets (needs gitleaks)
@@ -51,7 +74,7 @@ secrets: ## Scan the working tree and the history for secrets (needs gitleaks)
 	$(GITLEAKS) detect --source . --no-git --redact --no-banner --exit-code 1
 
 test: ## Run the tests with the coverage floor
-	$(UV) run pytest
+	$(UVRUN) pytest
 
 no-dashes: ## Reject em dashes and en dashes in tracked text
 # `git grep` exits 0 when it matches, 1 when it does not, and 128 when it
@@ -74,7 +97,7 @@ no-dashes: ## Reject em dashes and en dashes in tracked text
 	  exit $$status; \
 	fi
 
-verify: fmt-check lint typecheck security test no-dashes ## Run the full gate
+verify: lock-check fmt-check lint typecheck security test no-dashes ## Run the full gate
 	@echo "verify OK"
 
 clean: ## Remove build and test artefacts
