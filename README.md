@@ -99,7 +99,7 @@ differ.
 ### Advisories, and why they exist
 
 `Findings: none` is what a filer reads, whatever the status line above it
-says. So the promise above was attacked with twenty six deliberately hostile
+says. So the promise above was attacked with twenty seven deliberately hostile
 files, and four of them came back with an empty finding list: a file truncated
 inside a quoted value, a Month written with a fullwidth digit, a cell
 beginning `=`, and a file whose byte order mark the reader had quietly
@@ -183,7 +183,7 @@ part of it that loses something.
 
 Headers are transcribed byte for byte from the published CSV templates,
 including two irregularities that are reproduced rather than corrected:
-`CEC-1306A` Schedule 1 spells its seventh column `NumberofCustomers` with a
+`CEC-1306A` Schedule 1 spells its eighth column `NumberofCustomers` with a
 lower case "o", and Schedule 2 spells its fourth column `RetailRatClass`. The
 job is to match what the portal expects, not what the template ought to say.
 
