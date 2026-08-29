@@ -182,3 +182,35 @@ restored, and watched to pass.
   audit, and none was invented. They stay unevaluated.
 - **Issue #14, SARIF `ruleIndex`.** Already fixed by PR #21; `ruleIndex` is
   built as `len(rules)` before each append. The issue is stale, not open work.
+
+## Phase 7: four assertions that could not be false
+
+Found by a second pass over the test files that check the project's own
+documents and outputs, rather than its validation logic.
+
+- **`test_source_manifest.py`** asserted `assert date(year, month, day), "..."`.
+  `datetime.date` defines no `__bool__`, so every date object is truthy: the
+  assertion could never be False and its message was unreachable. What caught a
+  bad date was the `ValueError` inside `date(...)`, reported by pytest as an
+  error rather than a failure and carrying a stdlib message. The construction is
+  now the check, deliberately and with the authored message.
+- **`test_source_manifest.py`** compared `len(urls) == len(hashes) == len(dates)`
+  file-wide. An entry carrying two hashes beside a neighbour carrying none
+  satisfies it, which was verified by planting exactly that: the totals stayed
+  13/13/13 and the test stayed green. Each entry is now checked for its own
+  triple, because the manifest can only announce a revision for a document whose
+  hash sits next to its own url.
+- **`test_batch.py`** asserted `code in (EXIT_OK, EXIT_FINDINGS, EXIT_USAGE)`,
+  which is every value `main` can return. Four tests routed through that helper
+  with no exit-code coverage at all. Demonstrated by making a clean batch return
+  `EXIT_USAGE`: with the repaired assertion one test fails, with the original
+  all eleven pass.
+- **`test_sarif.py`** asserted `isinstance(index, int)` on advisory results while
+  its sibling for rule results wrote `isinstance(index, int) and not
+  isinstance(index, bool)`. `bool` subclasses `int`, so `ruleIndex: true` passed
+  the weaker one and `rules[True]` resolves silently to `rules[1]`: the wrong
+  rule, resolved without complaint. The two now agree.
+
+`test_batch.py::test_batch_entry_requires_exactly_one_of_report_or_problem`
+also tested neither and each one alone, never both, so the "exactly one" half of
+its name was unasserted. It is now.

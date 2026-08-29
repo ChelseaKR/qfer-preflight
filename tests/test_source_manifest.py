@@ -13,7 +13,10 @@ URLs already in `profiles.py`.
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
+
+import pytest
 
 from qfer_preflight.profiles import PROFILES, WORKSHOP_DECK_URL
 
@@ -43,6 +46,27 @@ def _cited_document_urls() -> set[str]:
     return urls
 
 
+def _manifest_entries() -> list[tuple[str, str]]:
+    """The `###` sections under `## Manifest`, as (heading, body) pairs.
+
+    Only that part of the file records documents. `## Not a document` and
+    `## Deliberately absent` describe things deliberately carrying no hash,
+    and requiring a triple of them would be requiring the opposite of what
+    they say.
+    """
+    text = _doc_text()
+    start = text.index("\n## Manifest\n")
+    body = text[start:]
+    end = body.find("\n## ", 1)
+    if end != -1:
+        body = body[:end]
+    entries: list[tuple[str, str]] = []
+    for chunk in body.split("\n### ")[1:]:
+        heading, _, rest = chunk.partition("\n")
+        entries.append((heading.strip(), rest))
+    return entries
+
+
 def test_every_cited_document_appears_in_the_manifest() -> None:
     text = _doc_text()
     listed = set(_URL_LINE.findall(text))
@@ -66,11 +90,54 @@ def test_manifest_entries_are_complete_triples() -> None:
     assert len(urls) == len(set(urls)), f"{MANIFEST_DOC.name} lists a url twice"
 
 
-def test_retrieval_dates_are_real_calendar_dates() -> None:
-    from datetime import date
+def test_each_manifest_entry_carries_its_own_triple() -> None:
+    """Per entry, not file-wide.
 
-    for raw in _DATE_LINE.findall(_doc_text()):
+    The count above is a whole-file total, so an entry carrying two hashes
+    beside a neighbour carrying none satisfies it. The manifest exists so that
+    a silent revision announces itself, and it can only do that for a document
+    whose own hash is recorded next to its own url.
+    """
+    sections = _manifest_entries()
+    assert sections, "found no manifest entries, so this check would pass vacuously"
+
+    for heading, body in sections:
+        for label, pattern in (
+            ("url", _URL_LINE),
+            ("sha256", _SHA256_LINE),
+            ("retrieved", _DATE_LINE),
+        ):
+            found = pattern.findall(body)
+            assert len(found) == 1, (
+                f"manifest entry {heading!r} carries {len(found)} {label} lines. "
+                "Each entry needs exactly one, or the hash and the url it "
+                "belongs to cannot be told apart"
+            )
+
+
+def test_retrieval_dates_are_real_calendar_dates() -> None:
+    """A malformed date must fail this test, and fail it with an explanation.
+
+    This used to read `assert date(year, month, day), "..."`. `datetime.date`
+    defines no `__bool__`, so every date object is truthy and the assertion
+    could never be False; its message was unreachable. What actually caught a
+    bad date was the ValueError raised inside `date(...)`, which pytest reports
+    as an error rather than a failure and with a stdlib message instead of the
+    authored one. The construction is now the check, deliberately, and it says
+    which line of the manifest is wrong.
+    """
+    dates = _DATE_LINE.findall(_doc_text())
+    assert dates, f"{MANIFEST_DOC.name} records no retrieval dates at all"
+
+    for raw in dates:
         year, month, day = (int(part) for part in raw.split("-"))
-        assert date(year, month, day), (
-            f"{MANIFEST_DOC.name} records {raw}, which is not a real date"
-        )
+        try:
+            date(year, month, day)
+        except ValueError as exc:
+            pytest.fail(f"{MANIFEST_DOC.name} records {raw!r}, which is not a real date: {exc}")
+
+
+def test_the_date_check_rejects_a_date_that_does_not_exist() -> None:
+    """The check above passes on today's manifest. This is why that means something."""
+    with pytest.raises(ValueError):
+        date(2026, 2, 30)

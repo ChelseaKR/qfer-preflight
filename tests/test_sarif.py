@@ -208,5 +208,13 @@ def test_every_advisory_result_also_resolves_by_index() -> None:
 
     for result in advisory_results:
         index = result["ruleIndex"]
-        assert isinstance(index, int)
+        # Same exclusion as the rule test above. `bool` is a subclass of `int`,
+        # so `isinstance(True, int)` holds and `rules[True]` silently resolves
+        # to `rules[1]`: a wrong rule, resolved without complaint. The two
+        # tests must agree on what the invariant is.
+        assert isinstance(index, int) and not isinstance(index, bool), (
+            f"ruleIndex for {result['ruleId']} is {type(index).__name__}, "
+            "and SARIF 2.1.0 types it as an integer"
+        )
+        assert 0 <= index < len(rules), f"ruleIndex {index} is outside rules[]"
         assert rules[index]["id"] == result["ruleId"]
