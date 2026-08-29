@@ -21,6 +21,7 @@ to be read correctly by eye.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -32,6 +33,13 @@ EN_DASH = "\u2013"
 EM_DASH = "\u2014"
 
 _PATTERN = re.compile(r"git grep -n -P '([^']+)'")
+
+# make's own commentary on stdout, which is not part of the recipe. GNU make
+# 4.x writes "make[1]: Entering directory ..." whenever MAKELEVEL is above
+# zero, which it is when the suite runs under `make test`; make 3.81, which is
+# what ships on macOS, writes "make: Entering directory ..." with no level.
+# Both spellings, or a developer machine and CI disagree about this test.
+_MAKE_CHATTER = re.compile(r"^make(\[[0-9]+\])?: ")
 
 
 def _gate_pattern() -> str:
@@ -119,16 +127,34 @@ def test_the_repository_itself_is_clean() -> None:
 
 
 def _recipe() -> str:
-    """The shell `make no-dashes` runs, as make expands it."""
+    """The shell `make no-dashes` runs, as make expands it.
+
+    `--no-print-directory`, and the filter below, are both needed. The suite
+    itself runs under `make test`, so this is a sub-make: GNU make announces
+    "Entering directory" on stdout whenever MAKELEVEL is above zero, and those
+    lines land in the middle of the recipe and are then handed to sh. The
+    first version of this helper passed on a developer machine, where pytest
+    is usually invoked directly, and failed in CI, where it never is.
+
+    The inherited make variables are cleared for the same reason: whatever
+    flags the outer make is running under are not the flags this recipe should
+    be read with.
+    """
+    environment = {k: v for k, v in os.environ.items() if not k.startswith("MAKE")}
     completed = subprocess.run(
-        ["make", "-n", "no-dashes"],
+        ["make", "--no-print-directory", "-n", "no-dashes"],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=True,
+        env=environment,
     )
-    recipe = completed.stdout.strip()
+    lines = [ln for ln in completed.stdout.splitlines() if not _MAKE_CHATTER.match(ln)]
+    recipe = "\n".join(lines).strip()
     assert "git grep" in recipe, f"the no-dashes recipe no longer runs git grep: {recipe}"
+    assert not any(_MAKE_CHATTER.match(ln) for ln in recipe.splitlines()), (
+        f"make chatter reached the recipe text and would be run as shell: {recipe}"
+    )
     return recipe
 
 
