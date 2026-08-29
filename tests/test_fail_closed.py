@@ -12,10 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from qfer_preflight.engine import validate_bytes, validate_path
-from qfer_preflight.model import Status
-from qfer_preflight.profiles import PROFILE_1306A_S1, get_profile
+from qfer_preflight.engine import _refuse_contradictions, validate_bytes, validate_path
+from qfer_preflight.model import Finding, NotEvaluated, Report, Severity, Status
+from qfer_preflight.profiles import PROFILE_1306A_S1, PROFILES, get_profile
 from qfer_preflight.report import to_json
+from qfer_preflight.rules import specs_for
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -138,3 +139,119 @@ def test_report_json_is_deterministic() -> None:
     first = _report_json("1306a_s1_clean.csv")
     second = _report_json("1306a_s1_clean.csv")
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# The partition, and the guard that enforces it
+# ---------------------------------------------------------------------------
+#
+# `model.Report` states the invariant: every rule applicable to a profile ends
+# up in exactly one of `rules_evaluated` or `rules_not_evaluated`. It held on
+# every path when these tests were written, and it held by construction, which
+# is the problem: two independent lines in `_Collector` each enforced it alone,
+# so either could be deleted with the whole suite staying green. A report
+# listing QP003 as evaluated and as not evaluated at once was one edit away and
+# nothing would have said so.
+#
+# So the invariant is asserted twice over. Once against every profile and every
+# gating path, which is what the tool must satisfy, and once against
+# `_refuse_contradictions` directly, which is what keeps the guard itself
+# falsifiable. A guard whose raise no test reaches is not a guard.
+
+
+def test_no_rule_is_ever_reported_as_both_evaluated_and_not_evaluated() -> None:
+    """The two lists partition the applicable rules. They never overlap."""
+    for profile_id, profile in sorted(PROFILES.items()):
+        header = ",".join(profile.header)
+        payloads = {
+            "empty": b"",
+            "not utf-8": b"\xff\xfe bad \xc3\x28",
+            "whitespace only": b"   \n \n",
+            "wrong header": b"a,b,c\n1,2,3\n",
+            "header only": f"{header}\n".encode(),
+            "one data row": f"{header}\n{','.join('1' for _ in profile.header)}\n".encode(),
+            "truncated quote": f'{header}\n"unclosed'.encode(),
+            "parse failure": f"{header}\n{'x' * 200_000}\n".encode(),
+        }
+        for name, payload in payloads.items():
+            report = validate_bytes(payload, profile, "x.csv")
+            overlap = set(report.rules_evaluated) & {n.rule_id for n in report.rules_not_evaluated}
+            assert not overlap, (
+                f"{profile_id} on {name!r} reports {sorted(overlap)} as both "
+                "evaluated and not evaluated"
+            )
+
+
+def test_every_applicable_rule_appears_in_one_of_the_two_lists() -> None:
+    """A rule that applied and is in neither list left no trace in the report."""
+    for profile_id, profile in sorted(PROFILES.items()):
+        header = ",".join(profile.header)
+        payloads = {
+            "empty": b"",
+            "wrong header": b"a,b,c\n1,2,3\n",
+            "header only": f"{header}\n".encode(),
+            "one data row": f"{header}\n{','.join('1' for _ in profile.header)}\n".encode(),
+        }
+        applicable = {spec.id for spec in specs_for(profile)}
+        for name, payload in payloads.items():
+            report = validate_bytes(payload, profile, "x.csv")
+            accounted = set(report.rules_evaluated) | {
+                n.rule_id for n in report.rules_not_evaluated
+            }
+            missing = sorted(applicable - accounted)
+            assert not missing, (
+                f"{profile_id} on {name!r} applies {missing} and mentions them in "
+                "neither list, so the report is silent about a check it ran"
+            )
+
+
+def _bare_report() -> Report:
+    return Report(
+        tool="qfer-preflight",
+        tool_version="test",
+        profile_id=PROFILE_1306A_S1.id,
+        profile_title=PROFILE_1306A_S1.title,
+        input_name="x.csv",
+        input_sha256="0" * 64,
+    )
+
+
+def test_the_guard_refuses_a_finding_citing_an_unevaluated_rule() -> None:
+    """Contradiction one: a report asserting a check it says it never ran."""
+    report = _bare_report()
+    report.findings = [Finding(rule_id="QP013", severity=Severity.ERROR, message="x")]
+    report.rules_evaluated = ["QP001"]
+    report.rules_not_evaluated = [NotEvaluated(rule_id="QP013", reason="blocked")]
+
+    with pytest.raises(ValueError, match="does not list the rule as evaluated"):
+        _refuse_contradictions(report, frozenset({"QP001", "QP013"}))
+
+
+def test_the_guard_refuses_a_rule_in_both_lists() -> None:
+    """Contradiction two: one rule, both answers."""
+    report = _bare_report()
+    report.rules_evaluated = ["QP001", "QP003"]
+    report.rules_not_evaluated = [NotEvaluated(rule_id="QP003", reason="header unknown")]
+
+    with pytest.raises(ValueError, match="as evaluated and as not evaluated"):
+        _refuse_contradictions(report, frozenset({"QP001", "QP003"}))
+
+
+def test_the_guard_refuses_an_applicable_rule_that_appears_in_neither_list() -> None:
+    """Contradiction three: a rule that applied and left no trace."""
+    report = _bare_report()
+    report.rules_evaluated = ["QP001"]
+    report.rules_not_evaluated = []
+
+    with pytest.raises(ValueError, match="neither evaluated nor unevaluated"):
+        _refuse_contradictions(report, frozenset({"QP001", "QP013"}))
+
+
+def test_the_guard_passes_a_report_that_partitions_cleanly() -> None:
+    """A gate that refuses everything is as useless as one that refuses nothing."""
+    report = _bare_report()
+    report.findings = [Finding(rule_id="QP001", severity=Severity.ERROR, message="x")]
+    report.rules_evaluated = ["QP001"]
+    report.rules_not_evaluated = [NotEvaluated(rule_id="QP013", reason="blocked")]
+
+    _refuse_contradictions(report, frozenset({"QP001", "QP013"}))
