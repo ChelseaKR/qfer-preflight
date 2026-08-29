@@ -40,6 +40,12 @@ dev = [
   "pip-audit>=2.9.0",
   "jsonschema>=4.26.0",
   "types-jsonschema>=4.26.0.20260518",
+  # Declared rather than inherited. tests/test_gate_parity.py parses the
+  # workflow files, and PyYAML was only present because bandit happens to
+  # depend on it. A gate resting on another tool's transitive dependency
+  # stops running the day that tool drops it.
+  "pyyaml>=6.0.0",
+  "types-PyYAML>=6.0.0",
 ]
 
 [build-system]

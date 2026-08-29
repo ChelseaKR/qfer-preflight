@@ -1,8 +1,9 @@
 # Every target here is what CI runs. `make verify` is the whole gate.
 .DEFAULT_GOAL := help
-.PHONY: help sync fmt fmt-check lint typecheck security audit test no-dashes verify clean
+.PHONY: help sync fmt fmt-check lint typecheck security audit secrets test no-dashes verify clean
 
 UV ?= uv
+GITLEAKS ?= gitleaks
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -31,6 +32,23 @@ audit: ## Audit locked dependencies for known vulnerabilities (needs network)
 	  --no-annotate --format requirements-txt > requirements-audit.txt
 	$(UV) run pip-audit --strict -r requirements-audit.txt
 	@rm -f requirements-audit.txt
+
+secrets: ## Scan the working tree and the history for secrets (needs gitleaks)
+# Two passes, because they look at different things. `gitleaks detect` reads
+# git history; `--no-git` reads the files on disk. The workflow step that runs
+# this was named "Scan the working tree and history" while doing only the
+# first, so a secret present in the tree and absent from history went unseen.
+#
+# Absence of the tool is a failure, not a skip. A gate that quietly passes on
+# the machines that cannot run it is worse than one that is not there, because
+# it is counted.
+	@command -v $(GITLEAKS) > /dev/null 2>&1 || { \
+	  echo "gitleaks not found. This gate cannot run, so it will not report success."; \
+	  echo "Install it, or run this check in CI where the workflow pins a version."; \
+	  exit 127; \
+	}
+	$(GITLEAKS) detect --source . --redact --no-banner --exit-code 1
+	$(GITLEAKS) detect --source . --no-git --redact --no-banner --exit-code 1
 
 test: ## Run the tests with the coverage floor
 	$(UV) run pytest
