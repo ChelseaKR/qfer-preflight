@@ -53,6 +53,18 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- QP033's quote for `CEC-1306A-S2` was Schedule 1's wording, under a comment
+  claiming the document reprints the same field definition in its Schedule 2
+  section. It does not. The "CEC-1306A Schedule 2 Instructions" section of
+  the cited PDF publishes its own Company Number definition, which adds "This
+  is the same Company Number found in CEC-1306A Schedule 1." and words the
+  leading zero clause as "numeric data type unless your Company Number
+  contains a leading zero, in which case, text data type" rather than
+  Schedule 1's "or text data type if Company Number begins with leading
+  zero". Found by reading the profile's quotes against the live PDF, page 4,
+  on 2026-08-29. The check itself was right both ways; the transcription is
+  what this project promises, and it was wrong. The S2 entry now carries the
+  Schedule 2 section's own wording.
 - SARIF `result.ruleIndex` carried the rule's identifier instead of its
   position. SARIF 2.1.0 types the field as an integer, the zero-based index
   into `runs[].tool.driver.rules`, and this rendering emitted a string such as
