@@ -100,3 +100,107 @@ def test_the_repository_itself_is_clean() -> None:
         check=False,
     )
     assert completed.returncode != 0, f"em/en dashes in tracked files:\n{completed.stdout}"
+
+
+# ---------------------------------------------------------------------------
+# The gate must also fail when it cannot run
+# ---------------------------------------------------------------------------
+#
+# Matching a dash is only half of what this target has to do. `git grep` exits
+# 0 when it matches, 1 when it does not, and 128 when it could not look at all:
+# a malformed pattern, no repository, an unreadable object. The original recipe
+# folded 1 and 128 into one branch and sent the message to /dev/null, so a
+# broken pattern printed "no em/en dashes" and exited 0. That is the same
+# failure the byte-escape spelling caused, arrived at from the other side: the
+# gate reporting success for having failed to run.
+#
+# These tests run the recipe make actually expands, in a scratch repository,
+# rather than asserting anything about how it is written.
+
+
+def _recipe() -> str:
+    """The shell `make no-dashes` runs, as make expands it."""
+    completed = subprocess.run(
+        ["make", "-n", "no-dashes"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    recipe = completed.stdout.strip()
+    assert "git grep" in recipe, f"the no-dashes recipe no longer runs git grep: {recipe}"
+    return recipe
+
+
+def _run_recipe(recipe: str, workdir: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["sh", "-c", recipe],
+        cwd=workdir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _scratch_repo(tmp_path: Path, content: str) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for command in (["git", "init", "-q", "."], ["git", "config", "user.email", "a@b.c"]):
+        subprocess.run(command, cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True, capture_output=True)
+    (repo / "prose.txt").write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "prose.txt"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "x"], cwd=repo, check=True, capture_output=True)
+    return repo
+
+
+def test_the_recipe_passes_on_text_with_no_dashes(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path, "plain ASCII prose with a hyphen - in it\n")
+    result = _run_recipe(_recipe(), repo)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "no em/en dashes" in result.stdout
+
+
+def test_the_recipe_fails_on_a_real_dash(tmp_path: Path) -> None:
+    repo = _scratch_repo(tmp_path, f"prose with {EN_DASH} a dash\n")
+    result = _run_recipe(_recipe(), repo)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Found em/en dashes" in result.stdout
+
+
+def test_the_recipe_fails_rather_than_passing_when_git_grep_cannot_run(
+    tmp_path: Path,
+) -> None:
+    """The fail-open this repair exists for.
+
+    A malformed pattern is exactly the defect that made this gate dead once
+    already. Whatever it does next, it may not be to announce success.
+    """
+    repo = _scratch_repo(tmp_path, "plain prose\n")
+    broken = _recipe().replace("'\\x{2013}|\\x{2014}'", "'bad['")
+    assert "bad[" in broken, "the pattern substitution did not land"
+
+    result = _run_recipe(broken, repo)
+    assert result.returncode != 0, (
+        "a malformed pattern made the dash gate exit 0. The gate reports "
+        "success for a check that did not happen"
+    )
+    assert result.returncode != 1, (
+        "a malformed pattern was reported as 'no match'. Exit 1 means git grep "
+        "looked and found nothing; it did not look"
+    )
+    assert "could not run" in result.stdout
+
+
+def test_the_recipe_does_not_discard_git_s_explanation() -> None:
+    """The original sent the reason to /dev/null, which is why it went unnoticed."""
+    recipe = _recipe()
+    assert "2>/dev/null" not in recipe, (
+        "the recipe throws away git grep's error output, so a gate that cannot run cannot say why"
+    )
+
+
+def test_the_recipe_writes_no_fixed_temp_file() -> None:
+    """A fixed path in the shared temp directory collides between runs and users."""
+    recipe = _recipe()
+    assert "/tmp/" not in recipe, f"the recipe writes to a fixed temp path: {recipe}"

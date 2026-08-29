@@ -36,11 +36,24 @@ test: ## Run the tests with the coverage floor
 	$(UV) run pytest
 
 no-dashes: ## Reject em dashes and en dashes in tracked text
-	@if git grep -n -P '\x{2013}|\x{2014}' -- \
-	    ':!*.lock' ':!uv.lock' > /tmp/qfer-dashes.txt 2>/dev/null; then \
-	  echo "Found em/en dashes in tracked files:"; cat /tmp/qfer-dashes.txt; exit 1; \
-	else \
+# `git grep` exits 0 when it matches, 1 when it does not, and 128 when it
+# could not look: a malformed pattern, no repository, an unreadable object.
+# Folding 128 into the "no match" branch is how a gate announces success for
+# having failed to run, which is what the byte-escape spelling of this pattern
+# did for the whole life of the repository. The three outcomes are kept apart.
+# No `set -e` here on purpose: it would abort on the grep's own non-zero exit
+# before the status could be read, and "no match" is a non-zero exit.
+	@out=$$(git grep -n -P '\x{2013}|\x{2014}' -- ':!*.lock' ':!uv.lock' 2>&1); \
+	status=$$?; \
+	if [ $$status -eq 0 ]; then \
+	  echo "Found em/en dashes in tracked files:"; echo "$$out"; exit 1; \
+	elif [ $$status -eq 1 ]; then \
 	  echo "no em/en dashes"; \
+	else \
+	  echo "the dash gate could not run (git grep exited $$status):"; \
+	  echo "$$out"; \
+	  echo "Refusing to report success for a check that did not happen."; \
+	  exit $$status; \
 	fi
 
 verify: fmt-check lint typecheck security test no-dashes ## Run the full gate

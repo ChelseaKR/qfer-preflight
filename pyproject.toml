@@ -106,7 +106,10 @@ max-complexity = 10
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+# `scripts` is in the list because it was not: a `def f(x: int) -> str: return x`
+# added to scripts/bench_large_file.py passed `make verify` untouched. A tool
+# that does not look at a directory reports it clean.
+files = ["src", "tests", "scripts"]
 strict = true
 warn_unreachable = true
 warn_unused_ignores = false
