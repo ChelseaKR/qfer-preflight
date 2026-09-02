@@ -93,6 +93,32 @@ breaking change and is recorded here.
   Two tests assert the round trip, that indexing into the rules array lands on
   the rule the result names, for findings and for advisories alike; a type
   check alone would have accepted an integer pointing at the wrong entry.
+- The SARIF rendering reported an incompletely checked filing as a clean one.
+  ADR 0001 makes a spotless submission report `unvalidated`, because every
+  profile registers rules that cannot be evaluated from published text, and
+  the text rendering prints that in capitals. This rendering carried it only
+  in `run.properties.status` and `run.properties.rulesNotEvaluated`, which are
+  extension properties no SARIF consumer reads, so the same run reached a
+  machine as an empty `results` array beside `executionSuccessful: true`. A
+  file whose bytes could not be decoded was worse: one QP001 result, and the
+  twenty two rules that were never applied because of it stated nowhere a
+  reader would look. That is the false clean ADR 0001 exists to prevent,
+  reintroduced by a derived surface. Every unevaluated rule now emits a
+  warning-level `invocation.toolExecutionNotifications` entry carrying its
+  reason, catalogued in `tool.driver.notifications`, and a report that is not
+  `pass` emits one more carrying the same verdict sentence the text rendering
+  prints. `executionSuccessful` stays true: the invocation did complete and
+  did reach a verdict, and what it could not check is what the notifications
+  say. The verdict sentence now has one definition, `unvalidated_sentence`,
+  used by both renderings, so they cannot drift into phrasing it differently.
+  Nothing about `results`, severities, citations or the native report changed.
+- `tests/test_sarif.py` had pinned the unevaluated rules to
+  `run.properties.rulesNotEvaluated` and called that fidelity. Surviving into
+  an extension bag no consumer reads is indistinguishable from being dropped,
+  for every reader the rendering exists to serve, so the test was asserting
+  the defect. It now holds them to the notifications, in both directions:
+  every unevaluated rule has a notification and every notification names an
+  unevaluated rule.
 
 ## [0.2.0] - 2026-08-26
 
