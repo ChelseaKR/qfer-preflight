@@ -40,6 +40,29 @@ _SEVERITY_LABEL = {
 _LINES_PER_RULE_AND_COLUMN = 10
 
 
+def unvalidated_sentence(report: Report) -> str | None:
+    """Why this report is not `pass`, in one sentence, or None when it is.
+
+    Every rendering that has room for a sentence says this in the same words.
+    It lives here rather than inside `to_text` because the SARIF rendering
+    needs the identical sentence: two renderings that each phrase the verdict
+    for themselves is how one of them ends up phrasing it more softly than the
+    other, and the softer one is the one a machine reads.
+    """
+    if report.status.value != "unvalidated":
+        return None
+    reasons = []
+    if report.rules_not_evaluated:
+        reasons.append("one or more rules were never applied")
+    if report.advisories:
+        reasons.append("the reader raised an advisory no published rule covers")
+    return (
+        "This submission is NOT reported as clean: "
+        + " and ".join(reasons)
+        + ", so parts of it are simply unchecked."
+    )
+
+
 def to_json(report: Report) -> str:
     """Canonical JSON rendering, ending in a single newline."""
     return json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n"
@@ -91,8 +114,28 @@ def batch_to_text(entries: Sequence[BatchEntry], tool: str) -> str:
 # SARIF exists so the same findings can appear in surfaces that speak it. It
 # is strictly derived from the native report: nothing is decided here that
 # the engine did not already decide, and everything the SARIF document cannot
-# carry natively (the overall status, unevaluated rules with their reasons,
-# the merge policy) is preserved in `properties` rather than dropped.
+# carry natively (the merge policy, the native counts) is preserved in
+# `properties` rather than dropped.
+#
+# `properties` is not on its own enough for the verdict, though, and that was
+# a real defect here rather than a hypothetical one. ADR 0001 makes a spotless
+# filing report `unvalidated`, because every profile registers rules that
+# cannot be evaluated from published text. The text rendering prints that in
+# capitals. This rendering carried it only in `run.properties.status` and
+# `run.properties.rulesNotEvaluated`, which are extension properties that no
+# SARIF consumer reads, so the same run reached a machine as an empty
+# `results` array next to `executionSuccessful: true`: a false clean, which
+# ADR 0001 names as the most dangerous failure a validator has.
+#
+# The standard has a place for a condition that arose during a run and is not
+# a result: `invocation.toolExecutionNotifications`, catalogued in
+# `tool.driver.notifications`. Every unevaluated rule gets one, and so does
+# the verdict, in the same sentence the text rendering prints.
+#
+# `executionSuccessful` stays true. The invocation did complete and did reach
+# a verdict; what it could not do was check everything, and that is what the
+# notifications say. The batch rendering's `false` is for the different case
+# of an input that produced no report at all.
 #
 # Advisories need care, because SARIF wants every result to name a rule and
 # an advisory is precisely not a rule. They are emitted as results of level
@@ -108,6 +151,16 @@ _SARIF_LEVEL = {
 }
 
 _ADVISORY_RESULT_LEVEL = "none"
+
+# Warning, not error. A spotless filing carries these, because unevaluated
+# rules are the normal state of this tool rather than a breakdown, and
+# error-level tool notifications are how a SARIF consumer is told the analysis
+# itself failed. Warning is loud enough to be surfaced and honest about what
+# happened.
+_NOTIFICATION_LEVEL = "warning"
+
+_UNEVALUATED_NOTIFICATION_ID = "qfer/rule-not-evaluated"
+_UNVALIDATED_NOTIFICATION_ID = "qfer/not-reported-as-clean"
 
 _SARIF_SCHEMA = (
     "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
@@ -177,6 +230,73 @@ def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, int]]:
     return rules, index
 
 
+def _sarif_notifications(report: Report) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Everything the run has to say that is not a finding.
+
+    Returns the descriptor catalogue for `tool.driver.notifications` and the
+    notifications themselves for `invocation.toolExecutionNotifications`.
+
+    Only descriptors an emitted notification actually references are
+    catalogued, exactly as `_sarif_rules` catalogues only the rules the
+    results reference, so the array is never a claim about something that did
+    not happen. `index` is recorded before each append, so it is the position
+    by construction rather than a count kept in step by hand.
+    """
+    descriptors: list[dict[str, Any]] = []
+    notifications: list[dict[str, Any]] = []
+    index: dict[str, int] = {}
+
+    def descriptor(descriptor_id: str, text: str) -> int:
+        position = index.get(descriptor_id)
+        if position is None:
+            position = len(descriptors)
+            index[descriptor_id] = position
+            descriptors.append(
+                {
+                    "id": descriptor_id,
+                    "shortDescription": {"text": text},
+                    "defaultConfiguration": {"level": _NOTIFICATION_LEVEL},
+                }
+            )
+        return position
+
+    for item in report.rules_not_evaluated:
+        position = descriptor(
+            _UNEVALUATED_NOTIFICATION_ID,
+            "A rule that applies to this filing was never applied to it.",
+        )
+        notifications.append(
+            {
+                "descriptor": {"id": _UNEVALUATED_NOTIFICATION_ID, "index": position},
+                "level": _NOTIFICATION_LEVEL,
+                "message": {
+                    "text": (
+                        f"{item.rule_id} was never applied to this filing, so "
+                        f"it did not pass: {item.reason}"
+                    )
+                },
+                "properties": {"ruleId": item.rule_id},
+            }
+        )
+
+    verdict = unvalidated_sentence(report)
+    if verdict is not None:
+        position = descriptor(
+            _UNVALIDATED_NOTIFICATION_ID,
+            "This filing was not checked completely enough to be called clean.",
+        )
+        notifications.append(
+            {
+                "descriptor": {"id": _UNVALIDATED_NOTIFICATION_ID, "index": position},
+                "level": _NOTIFICATION_LEVEL,
+                "message": {"text": verdict},
+                "properties": {"status": report.status.value},
+            }
+        )
+
+    return descriptors, notifications
+
+
 def report_to_sarif_dict(report: Report) -> dict[str, Any]:
     """One SARIF 2.1.0 run derived from one native report."""
     ordered = sorted(
@@ -243,20 +363,25 @@ def report_to_sarif_dict(report: Report) -> dict[str, Any]:
         )
 
     native = report.to_dict()
+    descriptors, notifications = _sarif_notifications(report)
+    driver: dict[str, Any] = {
+        "name": report.tool,
+        "version": report.tool_version,
+        "informationUri": _TOOL_URI,
+        "rules": rules,
+    }
+    if descriptors:
+        driver["notifications"] = descriptors
+    invocation: dict[str, Any] = {"executionSuccessful": True}
+    if notifications:
+        invocation["toolExecutionNotifications"] = notifications
     return {
         "$schema": _SARIF_SCHEMA,
         "version": "2.1.0",
         "runs": [
             {
-                "tool": {
-                    "driver": {
-                        "name": report.tool,
-                        "version": report.tool_version,
-                        "informationUri": _TOOL_URI,
-                        "rules": rules,
-                    }
-                },
-                "invocations": [{"executionSuccessful": True}],
+                "tool": {"driver": driver},
+                "invocations": [invocation],
                 "columnKind": "unicodeCodePoints",
                 "originalUriBaseIds": {
                     "INPUT": {"description": {"text": "The filing as given to this run."}}
@@ -479,17 +604,9 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
         f" | not evaluated: {len(report.rules_not_evaluated)}"
         f" | advisories: {len(report.advisories)}"
     )
-    if report.status.value == "unvalidated":
-        reasons = []
-        if report.rules_not_evaluated:
-            reasons.append("one or more rules were never applied")
-        if report.advisories:
-            reasons.append("the reader raised an advisory no published rule covers")
-        lines.append(
-            "This submission is NOT reported as clean: "
-            + " and ".join(reasons)
-            + ", so parts of it are simply unchecked."
-        )
+    verdict = unvalidated_sentence(report)
+    if verdict is not None:
+        lines.append(verdict)
     return "\n".join(lines) + "\n"
 
 
