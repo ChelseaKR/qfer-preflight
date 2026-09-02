@@ -1411,10 +1411,17 @@ def _blocked(collector: _Collector, detail: str, reason: str) -> None:
 def _empty_detail(ingest: _Ingest) -> str:
     """Say which kind of nothing the file holds, since they are not the same."""
     if ingest.had_bom and not ingest.tail_nonempty:
+        # The stray space before the comma was the hole left by an optional
+        # `{tail}` interpolation. When the branch stopped varying, the
+        # interpolation went and its space stayed, and the `.replace("  ", " ")`
+        # that had been guarding against a doubled space went on running over a
+        # literal that has none. The advisory this message sits next to, ADV-BOM,
+        # words the same clause as "byte order mark, the bytes EF BB BF", so the
+        # two disagreed about their own punctuation and this one was wrong.
         return (
-            "The file holds nothing but a UTF-8 byte order mark , the "
+            "The file holds nothing but a UTF-8 byte order mark, the "
             "bytes EF BB BF. There is no header row and no data."
-        ).replace("  ", " ")
+        )
     if ingest.had_bom and not ingest.tail_has_nonspace:
         return (
             "The file holds nothing but a UTF-8 byte order mark and "

@@ -170,7 +170,7 @@ def test_a_character_cut_in_half_by_eof_is_named_by_its_first_byte() -> None:
 def test_each_kind_of_nothing_says_which_it_is(tmp_path: Path) -> None:
     cases = {
         b"": "no bytes in it at all",
-        b"\xef\xbb\xbf": "nothing but a UTF-8 byte order mark ,",
+        b"\xef\xbb\xbf": "nothing but a UTF-8 byte order mark, the bytes EF BB BF",
         b"\xef\xbb\xbf \r\n\t ": "byte order mark and whitespace",
         b" \t\r\n ": "5 bytes of whitespace",
         b"\xc2\xa0": "2 bytes of whitespace",
@@ -179,6 +179,34 @@ def test_each_kind_of_nothing_says_which_it_is(tmp_path: Path) -> None:
         report = json.loads(_report_bytes(payload))
         assert expected in report["findings"][0]["message"], payload
         _assert_same_report(tmp_path, payload, f"nothing-{i}.csv")
+
+
+def test_no_message_leaves_a_space_in_front_of_its_punctuation(tmp_path: Path) -> None:
+    """A hole left by an interpolation that went away is still visible.
+
+    The byte order mark case read "byte order mark , the bytes EF BB BF" for
+    the life of the streaming reader, because an optional `{tail}` was removed
+    and the space in front of it stayed. This walks every message the reader
+    can produce for a file it refuses, rather than pinning the one that was
+    wrong, since the next such hole will be somewhere else.
+    """
+    payloads = [
+        b"",
+        b"\xef\xbb\xbf",
+        b"\xef\xbb\xbf \r\n\t ",
+        b" \t\r\n ",
+        b"\xc2\xa0",
+        b"abc\xff",
+        b'CompanyNumber,Year\r\n123,"open',
+    ]
+    for payload in payloads:
+        report = json.loads(_report_bytes(payload))
+        messages = [f["message"] for f in report["findings"]]
+        messages += [a["message"] for a in report["advisories"]]
+        assert messages, payload
+        for message in messages:
+            for punctuation in (" ,", " .", " ;", " :", "  "):
+                assert punctuation not in message, (payload, punctuation, message)
 
 
 def test_truncation_detected_when_the_open_quote_crosses_chunks(

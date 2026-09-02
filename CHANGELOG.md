@@ -119,6 +119,17 @@ breaking change and is recorded here.
   the defect. It now holds them to the notifications, in both directions:
   every unevaluated rule has a notification and every notification names an
   unevaluated rule.
+- The QP001 message for a file holding nothing but a byte order mark read
+  "byte order mark , the bytes EF BB BF", with a space in front of the comma.
+  It was the hole left by an optional `{tail}` interpolation that stopped
+  varying and was removed while the space in front of it stayed, next to a
+  `.replace("  ", " ")` that went on running over a literal with no doubled
+  space in it. The ADV-BOM advisory printed directly beneath it words the same
+  clause correctly, so the two messages disagreed about their own punctuation.
+  `tests/test_streaming.py` had pinned the defective spelling. It now walks
+  every message the reader can produce for a file it refuses and rejects a
+  space before any of `, . ; :`, so the next hole of this shape is caught
+  wherever it opens rather than only where this one was.
 
 ## [0.2.0] - 2026-08-26
 
