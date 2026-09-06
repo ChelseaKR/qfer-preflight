@@ -16,19 +16,19 @@ After 0.1.0:
 
 - Five form profiles, their headers transcribed byte for byte from the
   published CSV templates, defects included.
-- Twenty-three implemented rules and three registered as permanently
-  unevaluated so far (QP005, QP018, QP032), each unevaluated rule carrying a
-  stated reason visible in every report.
+- Twenty-four implemented rules and four registered as permanently
+  unevaluated so far (QP005, QP018, QP032, QP034), each unevaluated rule
+  carrying a stated reason visible in every report.
 - Five advisory codes in a closed code space (`ADVISORY_CODES`).
 - Three citable source classes: the instruction PDFs, the published CSV
   templates, and the June 24, 2025 DSP workshop deck.
 - A fail-closed engine whose contract is hashed into `tests/test_fail_closed.py`,
-  an adversarial corpus of twenty six hostile files, and a closed advisory
+  an adversarial corpus of twenty seven hostile files, and a closed advisory
   channel attacked by `tests/test_advisory_channel.py`.
 - Zero runtime dependencies. The validator runs on the standard library alone.
 - One gate, `make verify`: format, lint, type check, bandit, tests with a 90
   percent coverage floor, and the dash check.
-- Nine ADRs recording the decisions that constrain everything else.
+- Ten ADRs recording the decisions that constrain everything else.
 
 ## How anything gets into this project
 
@@ -60,11 +60,15 @@ in:
 
 ## Phase 1: Ground truth hardening
 
+**Status: shipped.** Every item below is built; each carries its own evidence.
+
 The registry is strong on the checks it makes and silent on the space between
 checks. This phase maps that space honestly. Nothing here changes a verdict;
 all of it changes what a reader can trust about the map.
 
 ### 1.1 Column coverage audit
+
+**Status: shipped.** Evidence: `docs/column-coverage.md`, `tests/test_column_coverage.py`.
 
 Produce a maintained matrix, checked into `docs/`, of every column in every
 published template against the rules that touch it:
@@ -89,6 +93,8 @@ column cannot silently skip the audit.
 
 ### 1.2 Source manifest
 
+**Status: shipped.** Evidence: `docs/source-manifest.md`, `tests/test_source_manifest.py`.
+
 Record, next to the URLs in `profiles.py`, a retrieval date and a SHA-256 for
 each cited document: the four instruction PDFs, the five CSV templates, the
 workshop deck, and the two Energy Consumption Data Files spreadsheets already
@@ -108,6 +114,8 @@ Definition of done: manifest committed, test enforcing completeness, and a
 short procedure in `CONTRIBUTING.md` for the re-download ritual.
 
 ### 1.3 Written promotion criteria for the unevaluated rules
+
+**Status: shipped.** Evidence: `src/qfer_preflight/rules.py::unimplemented_reason`, `docs/column-coverage.md`.
 
 QP005, QP018 and QP032 are the honest half of the tool. Each should carry, in
 one place, the exact evidence that would promote it, so the conditions are
@@ -131,10 +139,14 @@ points at them.
 
 ## Phase 2: Filer-facing capability
 
+**Status: shipped.** Every item below is built; each carries its own evidence.
+
 These items add convenience without touching rule truth. Each is designed
 against the fail-closed contract explicitly.
 
 ### 2.1 Profile detection
+
+**Status: shipped.** Evidence: `src/qfer_preflight/profiles.py::detect_profiles`, `tests/test_detect.py`.
 
 `check` requires `--profile` today, and a filer with five forms in a folder has
 to know which is which. Add optional detection: match the file's header row
@@ -148,6 +160,8 @@ two profiles after normalisation attempts) assert refusal.
 
 ### 2.2 Batch mode
 
+**Status: shipped.** Evidence: `src/qfer_preflight/report.py::batch_to_json`, `tests/test_batch.py`.
+
 Validate a directory or a file list in one run: one report per input, an
 aggregate summary line per input, and `--format json` gaining a multi-report
 envelope. Findings never merge across files. Exit codes need a defined
@@ -159,6 +173,8 @@ profile) produce per-file reports whose statuses match single-file runs
 byte for byte, asserted by test.
 
 ### 2.3 A published schema for the JSON report
+
+**Status: shipped.** Evidence: `docs/schemas/report-v1.schema.json`, `docs/schemas/report-batch-v1.schema.json`, `tests/test_report_schema.py`.
 
 The JSON report is a de facto interface. Publish a JSON Schema document for
 it, add an explicit schema version field, and state the compatibility policy:
@@ -173,6 +189,8 @@ Definition of done: schema committed, CI validates real reports against it,
 compatibility policy written next to it, changelog records the new field.
 
 ### 2.4 Bounded memory for very large filings
+
+**Status: shipped.** Evidence: `src/qfer_preflight/engine.py::_CHUNK_BYTES`, `tests/test_streaming.py`.
 
 `validate_path` reads the whole file once (`engine.py` writes `handle.read()`)
 and streams rows after decoding, so peak memory is roughly the file size. For a
@@ -195,6 +213,8 @@ constant rather than the file size.
 
 ### 2.5 SARIF output (optional)
 
+**Status: shipped.** Evidence: `src/qfer_preflight/report.py::report_to_sarif`, `tests/test_sarif.py`.
+
 Emit SARIF so the tool can drop into CI surfaces that speak it: findings as
 results with severity mapped, advisories as notifications preserving their
 no-severity nature, citations in the result message. Purely another serialiser;
@@ -204,6 +224,8 @@ Do this only after 2.3 stabilises the native JSON, and keep SARIF strictly
 derived from it rather than becoming a second source of truth.
 
 ## Phase 3: Registry growth under the citation bar
+
+**Status: continuing.** Growth work with no state to reach, so it is never "done"; it is bounded by the citation bar, not by a checklist.
 
 Phase 1.1 produces the candidate list; this phase is the method for acting on
 it. The order is fixed: read, quote, then decide.
@@ -244,6 +266,8 @@ documents already cited:
   conventions that a mechanical check could honour.
 
 ## Phase 4: New form coverage
+
+**Status: continuing.** Growth work with no state to reach, so it is never "done"; it is bounded by the citation bar, not by a checklist.
 
 Coverage expands only when the Commission publishes what a profile needs: a
 CSV template to transcribe and instructions that describe its fields. The
@@ -287,7 +311,9 @@ Intake checklist per new profile, each step leaving an artefact:
 
 ## Phase 5: Quality and supply chain
 
-- Adversarial corpus growth. Twenty six cases exist. Target: every new engine
+**Status: continuing.** Growth work with no state to reach, so it is never "done"; it is bounded by the citation bar, not by a checklist.
+
+- Adversarial corpus growth. Twenty seven cases exist. Target: every new engine
   capability in Phases 2 and 3 lands with at least one hostile input that
   tries to make it silent, and the corpus gains a documented category per new
   advisory ever added. The central assertion stays one line: no hostile input
@@ -313,6 +339,8 @@ Intake checklist per new profile, each step leaving an artefact:
   at release time, which costs little given the empty runtime dependency set.
 
 ## Phase 6: Documentation and stewardship
+
+**Status: continuing.** Growth work with no state to reach, so it is never "done"; it is bounded by the citation bar, not by a checklist.
 
 - A filer guide: one short page per profile with a synthetic worked example
   built from the published template, what each exit code means, when `--strict`
@@ -366,18 +394,18 @@ starts with a quote.
 
 Indicative order, each phase mostly independent of the later ones:
 
-| Order | Work | Depends on | Definition of done |
-|-------|------|------------|--------------------|
-| 1 | Column coverage audit (1.1) | nothing | matrix complete, test-enforced, README linked |
-| 2 | Source manifest (1.2) | nothing | hashes committed, completeness test, ritual documented |
-| 3 | Promotion criteria (1.3) | 1.1 preferred | criteria live with QP005, QP018, QP032 |
-| 4 | Report schema (2.3) | nothing | schema validated in CI, policy written |
-| 5 | Profile detection (2.1) | 1.2 helpful | ambiguity fails closed, corpus extended |
-| 6 | Batch mode (2.2) | 2.3 for envelope | parity with single-file runs asserted |
-| 7 | Registry growth (3) | 1.1 | each candidate ends in one of three recorded outcomes |
-| 8 | Bounded memory (2.4) | corpus extensions | identical reports, constant memory |
-| 9 | SARIF (2.5) | 2.3 | derived from native JSON only |
-| 10 | Quality and stewardship (5, 6) | continuous | ongoing, tracked here |
+| Order | Work | Status | Depends on | Definition of done |
+|-------|------|--------|------------|--------------------|
+| 1 | Column coverage audit (1.1) | shipped | nothing | matrix complete, test-enforced, README linked |
+| 2 | Source manifest (1.2) | shipped | nothing | hashes committed, completeness test, ritual documented |
+| 3 | Promotion criteria (1.3) | shipped | 1.1 preferred | criteria live with every unevaluated rule |
+| 4 | Report schema (2.3) | shipped | nothing | schema validated in CI, policy written |
+| 5 | Profile detection (2.1) | shipped | 1.2 helpful | ambiguity fails closed, corpus extended |
+| 6 | Batch mode (2.2) | shipped | 2.3 for envelope | parity with single-file runs asserted |
+| 7 | Registry growth (3) | continuing | 1.1 | each candidate ends in one of three recorded outcomes |
+| 8 | Bounded memory (2.4) | shipped | corpus extensions | identical reports, constant memory |
+| 9 | SARIF (2.5) | shipped | 2.3 | derived from native JSON only |
+| 10 | Quality and stewardship (5, 6) | continuing | continuous | ongoing, tracked here |
 
 Phases 1 and 2 items are safe to run in any order among themselves. Phase 3
 should wait for 1.1 so the reading effort lands where the map says the gaps
