@@ -161,6 +161,38 @@ def test_the_missing_published_example_is_stated_rather_than_left_blank(
     assert "ADR 0002" in out
 
 
+def test_a_rule_with_no_transcribed_quote_says_so_rather_than_showing_a_gap(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """QP002 rests on the published template's header row, not on a sentence, so no quote is
+    transcribed for it. The citation still resolves, and the missing quote must be named.
+
+    A blank where the quote goes would read as a rule with nothing behind it, which is the
+    opposite of true here: the citation points at the template itself.
+    """
+    code, out, _ = run("explain", "QP002", "--profile", "CEC-1306A-S1", capsys=capsys)
+    assert code == EXIT_OK
+    assert "No quote is transcribed for this rule on this form." in out
+    # The citation is still shown; the absence is of the quote, not of the source.
+    assert "URL:" in out
+
+
+def test_the_no_quote_case_is_a_case_this_registry_actually_has() -> None:
+    """The assertion above would pass over nothing if every rule carried a quote."""
+    from qfer_preflight.profiles import PROFILES as _PROFILES
+
+    quoteless = [
+        (spec.id, profile_id)
+        for spec in RULE_SPECS
+        for profile_id, profile in _PROFILES.items()
+        if spec.applies(profile) and spec.bind(profile).quote is None
+    ]
+    assert quoteless, (
+        "every registered rule now carries a quote on every form it applies to, so the "
+        "no-quote rendering is unreachable and the test above proves nothing"
+    )
+
+
 def test_a_rule_that_does_not_apply_to_a_form_says_so(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
