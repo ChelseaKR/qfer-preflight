@@ -8,6 +8,9 @@ these tests hold each scanner against its reference:
   * `_QuoteTrail` versus `_unterminated_quote`, the reference definition of
     truncation, across generated strings and forced chunk boundaries;
   * the line-ending counters versus counting the whole text directly;
+  * the offset a failed decode names versus a whole-file `bytes.decode`, at
+    every chunk size, so the chunked scanner is held against something other
+    than itself;
   * end-to-end report equality between `validate_path` and `validate_bytes`
     for every fixture, a multi-chunk synthetic filing, and hostile inputs,
     with the chunk size shrunk until boundaries land inside multibyte
@@ -226,3 +229,83 @@ def test_sha256_matches_hashing_the_whole_file(tmp_path: Path) -> None:
     path = _write(tmp_path, "hashed.csv", payload)
     report = json.loads(_report_file(path))
     assert report["input"]["sha256"] == hashlib.sha256(payload).hexdigest()
+
+
+# Sequences that are not valid UTF-8, chosen for how much of a character the
+# incremental decoder is left holding when a chunk boundary falls just before
+# the offending byte. That held length is the base the offset arithmetic used
+# to ignore.
+_BAD_SEQUENCES = {
+    "two-byte lead, one byte held": b"\xc3A",
+    "three-byte lead, one byte held": b"\xe2A",
+    "three-byte lead, two bytes held": b"\xe2\x82A",
+    "four-byte lead, three bytes held": b"\xf0\x9f\x92A",
+    "invalid on its own, nothing held": b"\xffA",
+}
+
+
+def _first_invalid_byte(payload: bytes) -> tuple[int, int]:
+    """The offset and value of the first byte a whole-file decode rejects.
+
+    This is the reference the chunked scanner is held against.
+    `encodings.utf_8_sig.decode` strips the mark and then decodes the rest, so
+    the exception it raises is indexed from after the mark. Putting the three
+    bytes back makes this a physical file offset, which is what the scanner
+    reports and therefore what it can be compared with.
+    """
+    try:
+        payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        start = exc.start + (3 if payload.startswith(b"\xef\xbb\xbf") else 0)
+        return start, payload[start]
+    raise AssertionError("the payload decodes cleanly, so it pins nothing")
+
+
+def _detail_at_chunk_size(payload: bytes, chunk: int) -> str | None:
+    scan = _StreamScan()
+    for start in range(0, len(payload), chunk):
+        scan.feed(payload[start : start + chunk])
+    scan.finish()
+    return scan.result().decode_detail
+
+
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"], ids=["no mark", "mark"])
+@pytest.mark.parametrize("shape", sorted(_BAD_SEQUENCES), ids=sorted(_BAD_SEQUENCES))
+def test_a_decode_error_names_the_byte_a_whole_file_decode_names(shape: str, bom: bytes) -> None:
+    """Regression: the named byte moved with the chunk boundary.
+
+    The decoder decodes its own leftover buffer followed by the new chunk, so
+    its error indices start one to three bytes before the chunk does whenever
+    the previous chunk ended mid-character. Only the byte order mark's shift
+    was undone, so the report named a byte past the real offender and called a
+    valid byte invalid.
+
+    Every chunk size is swept, which puts the boundary at each of the held
+    lengths in turn, and the answer is compared with a whole-file decode
+    rather than with the chunked scanner itself.
+    """
+    payload = bom + b"CompanyNumber,Year\r\n123,ok\r\nabcdefgh" + _BAD_SEQUENCES[shape] + b"z\r\n"
+    offset, value = _first_invalid_byte(payload)
+    expected = f"byte {offset} of the file is 0x{value:02X}, which is not valid UTF-8"
+    for chunk in range(1, len(payload) + 2):
+        assert _detail_at_chunk_size(payload, chunk) == expected, (shape, chunk)
+
+
+def test_the_shipped_chunk_size_is_where_this_bit_in_practice(tmp_path: Path) -> None:
+    """The measured case, with no chunk size monkeypatched.
+
+    `_CHUNK_BYTES` is 1 MiB, so a boundary falls inside any bulk filing, which
+    for this form is the ordinary case rather than an edge one. Here the last
+    byte of the first chunk is a UTF-8 lead byte and the first byte of the
+    second is the letter A. The report used to name the A.
+    """
+    header = (",".join(PROFILES["CEC-1306A-S1"].header) + "\r\n").encode()
+    payload = header + b"a" * (engine._CHUNK_BYTES - len(header) - 1) + b"\xe2A" + b"rest\r\n"
+    assert payload[engine._CHUNK_BYTES - 1] == 0xE2, "the fixture stopped straddling the boundary"
+
+    offset, value = _first_invalid_byte(payload)
+    assert (offset, value) == (engine._CHUNK_BYTES - 1, 0xE2)
+    report = json.loads(_report_bytes(payload))
+    assert f"byte {offset} of the file is 0xE2" in report["findings"][0]["message"]
+    assert "0x41" not in report["findings"][0]["message"], "the letter A is not the offender"
+    _assert_same_report(tmp_path, payload, "boundary.csv")

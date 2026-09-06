@@ -531,7 +531,17 @@ class _StreamScan:
 
     def __init__(self) -> None:
         self._hash = hashlib.sha256()
-        self._decoder = codecs.getincrementaldecoder("utf-8-sig")()
+        decoder = codecs.getincrementaldecoder("utf-8-sig")()
+        # The offset arithmetic in `feed` reads the decoder's own leftover
+        # buffer to undo the base its error indices are measured from. A
+        # decoder that does not expose one would send that arithmetic back to
+        # silently assuming zero, which is the defect this replaced, so refuse
+        # it here rather than guess later.
+        if not isinstance(decoder, codecs.BufferedIncrementalDecoder):  # pragma: no cover
+            raise TypeError(
+                "the utf-8-sig incremental decoder no longer buffers partial characters"
+            )
+        self._decoder: codecs.BufferedIncrementalDecoder = decoder
         self._quote_trail = _QuoteTrail()
         self._prefix = bytearray()
         self._tail = b""
@@ -558,20 +568,48 @@ class _StreamScan:
         self._bom_shift = self._settle_bom(raw)
         if self.decode_detail is not None:
             return
+        # Whatever the decoder is still holding from the previous chunk. It
+        # has to be read before the call, because afterwards it holds this
+        # chunk's leftovers instead.
+        held = bytes(self._decoder.buffer)
         try:
             text = self._decoder.decode(raw, final=False)
         except UnicodeDecodeError as exc:
-            # Once the mark is stripped, the decoder's indices run from after
-            # it. On the call that completes the mark, those bytes came out of
-            # this chunk, so the shift is however many of them it supplied;
-            # on every later call the mark sits entirely behind the offset
-            # arithmetic and the shift is zero.
-            shown_at = exc.start + self._bom_shift
-            offending = raw[shown_at : shown_at + 1]
-            self._record_decode_error(fed_before + shown_at, offending)
+            offset, offending = self._locate(exc, held, raw, fed_before)
+            self._record_decode_error(offset, offending)
             return
         if text:
             self._absorb(text)
+
+    def _locate(
+        self, exc: UnicodeDecodeError, held: bytes, raw: bytes, fed_before: int
+    ) -> tuple[int, bytes]:
+        """Where in the physical file the decoder's error index points.
+
+        Two bases have to be undone, and only one of them used to be.
+
+        The decoder decodes `held + raw`, not `raw`, so its indices start
+        `len(held)` bytes earlier than this chunk does. `held` is non-empty
+        exactly when the previous chunk ended on an incomplete but so far
+        valid character, which at the shipped chunk size is the ordinary case
+        for a filing over 1 MiB. Ignoring it named a byte one to three
+        positions past the real offender, and called a byte that is fine not
+        valid UTF-8.
+
+        Once the mark is stripped the decoder's indices run from after it, so
+        the three mark bytes go back on. They are split across the two bases:
+        `_bom_shift` counts the ones that came out of this chunk and `held`
+        carries the rest, which is why the correction is the whole mark rather
+        than `_bom_shift` alone. `_bom_shift` is non-zero on exactly the call
+        that strips the mark, and zero on every other call.
+        """
+        index = exc.start + (len(_UTF8_BOM) if self._bom_shift else 0)
+        if index < len(held):
+            offending = held[index : index + 1]
+        else:
+            within_chunk = index - len(held)
+            offending = raw[within_chunk : within_chunk + 1]
+        return fed_before - len(held) + index, offending
 
     def finish(self) -> None:
         """Close the stream: flush the decoder and settle the quote trail."""
