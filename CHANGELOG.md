@@ -70,6 +70,29 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- Profile detection refused a whole filing, with a false explanation, when a
+  valid header was followed by an invalid UTF-8 byte anywhere in the first
+  8 KB. Detection was documented everywhere as reading the header row only,
+  and did not: opening a text handle makes `TextIOWrapper` decode a whole
+  read-ahead block to satisfy one `next()`, so a `UnicodeDecodeError` raised
+  by bytes far past the header landed in the handler that reports on the first
+  row. The filer was sent to inspect a header that is byte perfect, and got no
+  report at all, while the identical defect a few thousand bytes further into
+  the file detected fine and got a report naming the offending byte exactly.
+  Which of the two outcomes a filing received depended only on where its bad
+  byte fell relative to a window nothing documents, on stderr in single-file
+  mode and as the entry's `problem` in batch mode. Detection now reads the
+  bytes of the first CSV record and stops, so a decode failure caught there is
+  genuinely about the header and everything past it is left to the reader,
+  which is fail-closed and names the byte. The record end is found on undecoded
+  bytes, which is safe because the quotation mark and the two line break
+  characters are ASCII and no ASCII byte appears inside a multi-byte UTF-8
+  sequence. `tests/test_detect.py` pins the outcome at seven offsets bracketing
+  the old 8 KB boundary, in single-file and batch mode, checks that detection
+  and `--profile` now produce the same report, and holds the record scan
+  against what `csv` treats as the end of a record, including a line break
+  inside a quoted field, across every chunk size.
+
 - The streaming reader named the wrong byte, and called a valid byte invalid,
   when a bad UTF-8 sequence straddled a chunk boundary. The incremental
   decoder decodes its own leftover buffer followed by the new chunk, so its
