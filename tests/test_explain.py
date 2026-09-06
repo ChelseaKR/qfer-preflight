@@ -212,6 +212,43 @@ def test_a_rule_that_does_not_apply_to_a_form_says_so(
     assert "URL:" not in out
 
 
+def test_a_rule_that_does_not_apply_says_it_never_ran_against_the_value(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--profile` and `--value` together must not report a run that never happened.
+
+    `_binding` reports non applicability as its own fact. `_value_payload` did
+    not: it set `exercised` true, ran nothing, and printed
+
+        QPnnn raised nothing for this value in any column of .
+
+    naming an empty list of forms and reading exactly like a rule that ran
+    across every column and found the value clean. That is the same misreading
+    `test_a_rule_no_single_cell_can_exercise_says_so_rather_than_finding_nothing`
+    exists to prevent for a structural rule.
+    """
+    spec_by_id = {spec.id: spec for spec in RULE_SPECS}
+    pairs = [
+        (spec_id, profile_id)
+        for spec_id, spec in spec_by_id.items()
+        for profile_id, profile in PROFILES.items()
+        if not spec.applies(profile) and rule_kind(spec) == "field"
+    ]
+    assert pairs, "no field rule fails to apply to some profile; this test would prove nothing"
+    spec_id, profile_id = pairs[0]
+
+    payload = explain(spec_id, profile_id=profile_id, value="XYZ")
+    assert payload["value"]["exercised"] is False
+    assert "was not run against this value" in payload["value"]["note"]
+    assert profile_id in payload["value"]["note"]
+
+    code, out, _ = run("explain", spec_id, "--profile", profile_id, "--value", "XYZ", capsys=capsys)
+    assert code == EXIT_OK
+    assert "was not run against this value" in out
+    assert "raised nothing for this value" not in out
+    assert "in any column of ." not in out
+
+
 # ---------------------------------------------------------------------------
 # Properties over the whole registry.
 # ---------------------------------------------------------------------------
