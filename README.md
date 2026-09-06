@@ -44,6 +44,28 @@ Show every rule with the text it was derived from:
 uv run qfer-preflight rules --profile CEC-1306A-S1
 ```
 
+See what changed between two runs over the same filing, after you have edited
+the spreadsheet and exported again:
+
+```sh
+uv run qfer-preflight check my-filing.csv --format json > before.json
+# edit, re-export, re-run
+uv run qfer-preflight check my-filing.csv --format json > after.json
+uv run qfer-preflight diff before.json after.json
+```
+
+Every finding line is listed as resolved, new, changed or unchanged. A line is
+identified by its rule, its column and its message text, which is the same
+identity that decides whether two findings may be merged (ADR 0006), so a
+problem you fixed in one row and reintroduced in another is reported as a
+count and row change rather than as one problem vanishing and a different one
+appearing. Advisories and unevaluated rules are compared the same way. It exits
+`1` only when an error-level finding is present now and was not before, and `2`
+when the two documents cannot be compared: different profiles, different schema
+versions, or a batch envelope on either side. It suggests nothing about which
+edit caused a change; it re-keys two reports and says which lines are the same
+lines.
+
 Exit codes: `0` no error-level findings, `1` at least one error-level finding
 (or, with `--strict`, anything left unevaluated or any advisory raised), `2`
 bad invocation.
