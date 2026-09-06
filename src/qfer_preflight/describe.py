@@ -254,16 +254,27 @@ def _position_differences(expected: Sequence[str], actual: Sequence[str]) -> lis
 
 
 def _membership_lines(expected: Sequence[str], actual: Sequence[str]) -> list[str]:
+    """What each side has that the other does not, with any truncation stated.
+
+    The unexpected names are capped at :data:`_MAX_DETAIL_LINES`, and the cap
+    has to say so. A list of eight that is really a list of twelve reads as the
+    whole of the problem: the filer renames the eight, re-exports, and is told
+    about four more. :func:`_detail_sentence` already ends "and N further
+    difference(s)" whenever it truncates; this is the same sentence for the
+    same reason.
+    """
     lines = []
     missing = [name for name in expected if name not in actual]
     unexpected = [name for name in actual if name not in expected]
     if missing:
         lines.append("missing column names: " + ", ".join(f'"{n}"' for n in missing))
     if unexpected:
-        lines.append(
-            "column names the template does not have: "
-            + ", ".join(f'"{visible(n)}"' for n in unexpected[:_MAX_DETAIL_LINES])
-        )
+        shown = unexpected[:_MAX_DETAIL_LINES]
+        remainder = len(unexpected) - len(shown)
+        listed = ", ".join(f'"{visible(n)}"' for n in shown)
+        if remainder:
+            listed += f" and {remainder} further name{'s' if remainder > 1 else ''}"
+        lines.append("column names the template does not have: " + listed)
     return lines
 
 

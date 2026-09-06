@@ -434,6 +434,42 @@ def test_a_header_report_always_ends_with_the_template_line() -> None:
     assert message.endswith(",".join(PROFILE_1306A_S1.header))
 
 
+def test_a_truncated_list_of_unexpected_columns_says_it_was_truncated() -> None:
+    """Eight names shown out of twelve must not read as the whole problem.
+
+    The template's own columns, in order, with twelve working columns appended:
+    a spreadsheet exported without deleting the scratch columns beside it. No
+    position differs, so the only thing the report can say is which names the
+    template does not have, and `describe._membership_lines` caps that list at
+    eight and used to say nothing about the rest. The filer deletes the eight,
+    re-exports, and is told about four more.
+
+    `_detail_sentence` beside it has always ended "and N further difference(s)"
+    when it truncates.
+    """
+    from qfer_preflight.describe import _MAX_DETAIL_LINES
+
+    extra = [f"Extra{i}" for i in range(1, 13)]
+    assert len(extra) > _MAX_DETAIL_LINES
+    columns = [*PROFILE_1306A_S1.header, *extra]
+    body = ",".join(columns) + "\n" + ",".join("1" for _ in columns) + "\n"
+    message = next(f.message for f in _check(body).findings if f.rule_id == "QP002")
+
+    named = [name for name in extra if name in message]
+    assert len(named) == _MAX_DETAIL_LINES, "the cap itself moved; update this test"
+    assert f"and {len(extra) - _MAX_DETAIL_LINES} further names" in message
+
+
+def test_an_untruncated_list_of_unexpected_columns_claims_no_remainder() -> None:
+    """The remainder appears only when something was actually dropped."""
+    extra = ["Alpha", "Beta", "Gamma"]
+    columns = [*PROFILE_1306A_S1.header, *extra]
+    body = ",".join(columns) + "\n" + ",".join("1" for _ in columns) + "\n"
+    message = next(f.message for f in _check(body).findings if f.rule_id == "QP002")
+    assert all(name in message for name in extra)
+    assert "further name" not in message
+
+
 # ---------------------------------------------------------------------------
 # Formula injection and hidden characters
 # ---------------------------------------------------------------------------
