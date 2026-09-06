@@ -128,6 +128,26 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- **The batch SARIF rendering recorded a refusal only where no consumer reads it.**
+  An input the tool could not process gets a run of its own, and that run carried its
+  reason in `run.properties.problem` alone. A machine reading the log saw an
+  unsuccessful invocation, an empty `results` array, no `toolExecutionNotifications`
+  and no catalogued notification descriptor, with nothing in the standard saying the
+  filing was never validated or why. That is the same extension bag, and the same
+  mistake, the single-report rendering was corrected for: the fix that gave every
+  unevaluated rule a notification never reached `batch_to_sarif`, so **the run that
+  checked nothing said less, in the places a consumer looks, than the run that checked
+  almost everything.** Measured on a two-input batch of `1306a_s1_clean.csv` and
+  `empty.csv`: the validated run carried five notifications against zero results, and
+  the never-validated run carried none.
+  Such a run now carries one `toolExecutionNotification` at level `error`, naming the
+  input and repeating the native reason, with its descriptor catalogued in
+  `tool.driver.notifications`. `error` rather than the `warning` an unevaluated rule
+  carries, because a run that reached a verdict without checking everything is not the
+  same condition as an input for which no analysis ran at all.
+  `executionSuccessful` stays `false` and `properties.problem` stays, since nothing is
+  dropped for being said in two places.
+
 - Commits reached `main` with no CI verdict at all. `ci.yml` and
   `security.yml` keyed their concurrency group on `github.ref`, which puts
   every push to `main` into one group, and cancelled in progress runs

@@ -161,6 +161,13 @@ _NOTIFICATION_LEVEL = "warning"
 
 _UNEVALUATED_NOTIFICATION_ID = "qfer/rule-not-evaluated"
 _UNVALIDATED_NOTIFICATION_ID = "qfer/not-reported-as-clean"
+_NOT_VALIDATED_NOTIFICATION_ID = "qfer/input-not-validated"
+
+# Error, unlike the two above. Those describe a run that completed and reached a
+# verdict without being able to check everything. This one describes an input for
+# which no analysis ran at all, and an error-level tool notification is exactly how
+# a SARIF consumer is told that the analysis itself failed.
+_REFUSAL_NOTIFICATION_LEVEL = "error"
 
 _SARIF_SCHEMA = (
     "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
@@ -422,10 +429,24 @@ def report_to_sarif(report: Report) -> str:
 def batch_to_sarif(entries: Sequence[BatchEntry], tool: str, tool_version: str) -> str:
     """A SARIF log with one run per input.
 
-    An input that could not be processed produces a run with no results and
-    its refusal recorded in run.properties.problem. SARIF has room for one
-    run per artifact, and this tool refuses to let an unreadable file be
-    silent.
+    An input that could not be processed produces a run with no results, whose
+    invocation is unsuccessful and carries a notification saying why nothing was
+    checked. SARIF has room for one run per artifact, and this tool refuses to let
+    an unreadable file be silent.
+
+    The notification is the point. This branch used to record the refusal only in
+    ``run.properties.problem``, which is the same place, and the same mistake, that
+    the single-report rendering above was corrected for: an extension property no
+    SARIF consumer reads. A machine saw an unsuccessful invocation, an empty
+    ``results`` array, no notification and no catalogued descriptor, and had nowhere
+    in the standard to learn that this filing was never validated or why. The fix
+    that gave every unevaluated rule a notification never reached this branch, so
+    the run that checked *nothing* said less, in the places a consumer looks, than
+    the run that checked almost everything.
+
+    ``properties.problem`` stays, for the same reason the single-report rendering
+    keeps its own properties: it is the native text, and nothing here is dropped
+    because it is also said elsewhere.
     """
     runs: list[dict[str, Any]] = []
     for entry in entries:
@@ -438,9 +459,43 @@ def batch_to_sarif(entries: Sequence[BatchEntry], tool: str, tool_version: str) 
                         "name": tool,
                         "version": tool_version,
                         "informationUri": _TOOL_URI,
+                        "notifications": [
+                            {
+                                "id": _NOT_VALIDATED_NOTIFICATION_ID,
+                                "shortDescription": {
+                                    "text": (
+                                        "An input was never validated, so no rule was "
+                                        "applied to it."
+                                    )
+                                },
+                                "defaultConfiguration": {"level": _REFUSAL_NOTIFICATION_LEVEL},
+                            }
+                        ],
                     }
                 },
-                "invocations": [{"executionSuccessful": False}],
+                "invocations": [
+                    {
+                        "executionSuccessful": False,
+                        "toolExecutionNotifications": [
+                            {
+                                "descriptor": {
+                                    "id": _NOT_VALIDATED_NOTIFICATION_ID,
+                                    "index": 0,
+                                },
+                                "level": _REFUSAL_NOTIFICATION_LEVEL,
+                                "message": {
+                                    "text": (
+                                        f"{entry.input_name} was never validated, so no "
+                                        "rule was applied to it and the empty results "
+                                        "array below says nothing about its contents: "
+                                        f"{entry.problem}"
+                                    )
+                                },
+                                "properties": {"inputName": entry.input_name},
+                            }
+                        ],
+                    }
+                ],
                 "results": [],
                 "properties": {"problem": entry.problem},
             }
