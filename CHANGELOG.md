@@ -70,6 +70,22 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- Commits reached `main` with no CI verdict at all. `ci.yml` and
+  `security.yml` keyed their concurrency group on `github.ref`, which puts
+  every push to `main` into one group, and cancelled in progress runs
+  unconditionally, so each merge discarded the run belonging to the commit
+  before it. Measured on 2026-09-06 over the whole run history: `62ce09d`
+  carries no check runs at all, `ac467a1` carries only cancelled ones, and
+  `ee7b346` carries four cancelled out of five, all three from pull requests
+  merged thirteen seconds apart. A gate whose result was thrown away is not
+  distinguishable afterwards from a gate that never ran. Turning cancellation
+  off would not have repaired it, because a concurrency group holds at most one
+  pending run and a third arrival evicts the second as silently. The group now
+  varies with the commit on a push, so no two `main` runs ever contend, while a
+  pull request keeps its ref and keeps cancelling superseded runs, which is
+  what that setting was added for. `tests/test_gate_parity.py` holds both
+  workflows to it.
+
 - Profile detection refused a whole filing, with a false explanation, when a
   valid header was followed by an invalid UTF-8 byte anywhere in the first
   8 KB. Detection was documented everywhere as reading the header row only,

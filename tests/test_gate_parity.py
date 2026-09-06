@@ -231,3 +231,46 @@ def test_the_recipe_reader_ignores_comments() -> None:
     body = _recipe_lines("secrets")
     assert "#" not in body, f"comments leaked into the recipe text: {body}"
     assert "gitleaks" in body.lower(), "the reader returned no gitleaks command at all"
+
+
+# ---------------------------------------------------------------------------
+# A commit that reaches the default branch must get a verdict
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("workflow", GATE_WORKFLOWS)
+def test_a_push_run_cannot_be_thrown_away_by_a_later_push(workflow: str) -> None:
+    """Cancelling a superseded pull request run is wanted. Cancelling a push run is not.
+
+    A concurrency group keyed on `github.ref` puts every push to the default
+    branch into one group, and cancelling in progress runs then makes each
+    merge discard the run belonging to the commit before it. Measured on
+    2026-09-06 in this repository: three commits sit on `main` with cancelled
+    runs or none at all, from three pull requests merged thirteen seconds
+    apart. A gate whose result was thrown away is indistinguishable from a gate
+    that never ran.
+
+    Turning cancellation off is not the repair, because a concurrency group
+    holds at most one pending run and a third arrival evicts the second just as
+    silently. The group has to differ per commit instead, which is what keying
+    it on the SHA does.
+    """
+    concurrency = _load(workflow).get("concurrency")
+    assert concurrency, f"{workflow} declares no concurrency group"
+
+    group = str(concurrency["group"])
+    cancel = str(concurrency["cancel-in-progress"])
+
+    assert "github.sha" in group, (
+        f"{workflow}'s concurrency group does not vary with the commit, so two "
+        "pushes to the default branch share a group and one can cancel or evict "
+        "the other, leaving a commit on the branch with no verdict"
+    )
+    assert cancel.strip().lower() != "true", (
+        f"{workflow} cancels in progress runs unconditionally, which on a push "
+        "to the default branch throws away the only verdict that commit gets"
+    )
+    assert "pull_request" in cancel, (
+        f"{workflow} no longer limits cancellation to pull requests, which is "
+        "the one place a superseded run should stop holding a runner"
+    )

@@ -10,9 +10,20 @@ on:
 permissions:
   contents: read
 
+# Cancelling a superseded pull request run is the point. Cancelling a run for a
+# commit already on `main` is a commit shipped with no verdict, and keying the
+# group on `github.ref` put every push to `main` in one group. Measured
+# 2026-09-06: 62ce09d has no check runs at all, ac467a1 has only cancelled
+# ones, and ee7b346 has four cancelled out of five, from three pull requests
+# merged thirteen seconds apart.
+#
+# Setting `cancel-in-progress: false` is not the repair. A group holds at most
+# one pending run, so a third arrival evicts the second and it is dropped just
+# as silently. The group has to differ per commit, which is what keying it on
+# the SHA for a push does; pull requests keep the ref, and keep cancelling.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
