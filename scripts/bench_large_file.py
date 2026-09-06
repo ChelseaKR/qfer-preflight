@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import os
 import resource
+import sys
 import tempfile
 import time
 
@@ -28,8 +29,26 @@ HEADER = (
 )
 
 
+def maxrss_to_mib(maxrss: int, platform: str = sys.platform) -> float:
+    """Convert one `ru_maxrss` reading to MiB.
+
+    The unit is platform dependent, which `getrusage(2)` states and which
+    nothing in the reading itself reveals: bytes on macOS and the BSDs,
+    kilobytes on Linux. Dividing by 1024 * 1024 unconditionally was right on
+    the machine this script was written on and 1024 times too small on the
+    only platform the project runs automatically, since every job in
+    `ci.yml`, `release.yml` and `security.yml` is `runs-on: ubuntu-latest`.
+    Too small is also the flattering direction for a number whose whole
+    purpose is to show that memory stays bounded, and at one decimal place an
+    ordinary run printed `0.0 MiB`, which reads as a broken harness rather
+    than as a wrong unit.
+    """
+    bytes_per_unit = 1 if platform == "darwin" else 1024
+    return maxrss * bytes_per_unit / (1024 * 1024)
+
+
 def peak_rss_mib() -> float:
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+    return maxrss_to_mib(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
 def main() -> int:
