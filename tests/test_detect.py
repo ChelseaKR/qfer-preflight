@@ -5,6 +5,11 @@ byte for byte against the transcribed templates and refuses to guess when the
 match is zero or more than one. The refusal cases are as important as the
 match case, because validating against the wrong form would produce findings
 about columns that mean something else.
+
+Detection reads the bytes of the first record and stops. That is a contract,
+not a performance note, so it is tested directly: a defect past the header
+belongs to the reader, which names the offending byte, and must never be
+reported here as a fact about row one.
 """
 
 from __future__ import annotations
@@ -14,7 +19,14 @@ from pathlib import Path
 
 import pytest
 
-from qfer_preflight.cli import EXIT_FINDINGS, EXIT_OK, EXIT_USAGE, main
+from qfer_preflight import cli
+from qfer_preflight.cli import (
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_USAGE,
+    _read_header_bytes,
+    main,
+)
 from qfer_preflight.profiles import (
     PROFILES,
     Profile,
@@ -141,3 +153,124 @@ def test_explicit_unknown_profile_still_exits_two(
 ) -> None:
     assert main(["check", str(FIXTURES / "empty.csv"), "--profile", "NOPE"]) == EXIT_USAGE
     capsys.readouterr()
+
+
+# A filing whose header is byte for byte correct and whose only defect is one
+# invalid byte in a data row. The offsets bracket the 8 KB read-ahead window a
+# text handle used to decode behind detection's back.
+_HEADER = (",".join(PROFILES["CEC-1306A-S1"].header) + "\r\n").encode()
+_GOOD_ROW = b"123,2025,3,14,B,RESIDENTIAL_OTHER,925190,10,1000.50,25\r\n"
+
+
+def _filing_with_a_bad_byte_at(offset: int) -> bytes:
+    """A valid filing with byte `offset` replaced by an invalid UTF-8 byte."""
+    assert offset > len(_HEADER), "the point is a defect past the header"
+    rows = _GOOD_ROW * (1 + (offset * 2) // len(_GOOD_ROW))
+    payload = bytearray(_HEADER + rows)
+    payload[offset] = 0xFF
+    return bytes(payload)
+
+
+@pytest.mark.parametrize("offset", [200, 4038, 8191, 8192, 8193, 9022, 12000])
+def test_a_bad_byte_past_the_header_is_reported_the_same_wherever_it_falls(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], offset: int
+) -> None:
+    """Regression: detection used to refuse or succeed depending on the offset.
+
+    Reading the header through a text handle decoded a whole read-ahead block,
+    so a `UnicodeDecodeError` raised by bytes far past the header landed in
+    detection's handler and was reported as a fact about the first row. The
+    filing then got no report at all. The identical defect a few thousand
+    bytes later detected fine and got a report naming the offending byte.
+    """
+    path = _write(tmp_path, f"bad-at-{offset}.csv", _filing_with_a_bad_byte_at(offset))
+    assert main(["check", path, "--format", "json"]) == EXIT_FINDINGS
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+    report = json.loads(captured.out)
+    assert report["profile"]["id"] == "CEC-1306A-S1"
+    message = report["findings"][0]["message"]
+    assert f"byte {offset} of the file is 0xFF" in message
+
+
+@pytest.mark.parametrize("offset", [200, 9022])
+def test_naming_the_profile_gives_the_same_answer_detection_now_does(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], offset: int
+) -> None:
+    """The two routes agreed already for a late byte and disagreed for an early one."""
+    payload = _filing_with_a_bad_byte_at(offset)
+    detected = _write(tmp_path, f"detected-{offset}.csv", payload)
+    assert main(["check", detected, "--format", "json"]) == EXIT_FINDINGS
+    by_detection = json.loads(capsys.readouterr().out)
+
+    named = _write(tmp_path, f"named-{offset}.csv", payload)
+    assert main(["check", named, "--format", "json", "--profile", "CEC-1306A-S1"]) == EXIT_FINDINGS
+    by_name = json.loads(capsys.readouterr().out)
+
+    del by_detection["input"]["name"], by_name["input"]["name"]
+    assert by_detection == by_name
+
+
+def test_a_bad_byte_past_the_header_does_not_take_a_batch_entry_down(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """In batch mode the false reason landed as the entry's `problem` instead."""
+    early = _write(tmp_path, "early.csv", _filing_with_a_bad_byte_at(200))
+    late = _write(tmp_path, "late.csv", _filing_with_a_bad_byte_at(9022))
+    assert main(["check", early, late, "--format", "json"]) == EXIT_FINDINGS
+
+    entries = json.loads(capsys.readouterr().out)["results"]
+    assert [entry.get("problem") for entry in entries] == [None, None]
+    assert [entry["report"]["findings"][0]["message"] for entry in entries] == [
+        f"The file is not valid UTF-8 text: byte {n} of the file is 0xFF, which is "
+        "not valid UTF-8. This tool reads UTF-8, so it could not open the file and "
+        "validated nothing in it. Re-save the file as UTF-8 and run it again."
+        for n in (200, 9022)
+    ]
+
+
+def test_detection_reads_the_header_row_and_no_more(tmp_path: Path) -> None:
+    """The docstring's claim, made checkable.
+
+    Nothing else in the suite could tell "reads the header" from "reads a
+    block and stops at the header", which is what it was doing.
+    """
+    payload = _HEADER + _GOOD_ROW * 500
+    assert len(payload) > 8192, "the fixture stopped reaching past the read-ahead window"
+    path = _write(tmp_path, "big.csv", payload)
+    assert _read_header_bytes(path) == _HEADER.rstrip(b"\r\n")
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        (b"", b""),
+        (b"\r\nrow\r\n", b""),
+        (b"a,b", b"a,b"),
+        (b"a,b\nrow", b"a,b"),
+        (b"\xef\xbb\xbfa,b\r\nrow\r\n", b"\xef\xbb\xbfa,b"),
+        (b'a,"line\r\nbreak",b\r\nrow\r\n', b'a,"line\r\nbreak",b'),
+        (b'a,"a""b",c\r\nrow\r\n', b'a,"a""b",c'),
+        (b'a,"unclosed\r\nrow', b'a,"unclosed\r\nrow'),
+        (b'a,b"c\r\nrow', b'a,b"c'),
+    ],
+)
+def test_the_record_scan_ends_where_csv_says_the_record_ends(
+    tmp_path: Path, payload: bytes, expected: bytes
+) -> None:
+    """A line break inside a quoted field does not end the record; one outside does."""
+    path = _write(tmp_path, "record.csv", payload)
+    assert _read_header_bytes(path) == expected
+
+
+def test_the_record_scan_agrees_with_csv_across_chunk_boundaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan carries quote state across reads, so the chunk size cannot matter."""
+    payload = b'first,"quoted\r\nvalue",last\r\nsecond row\r\n'
+    baseline = _read_header_bytes(_write(tmp_path, "baseline.csv", payload))
+    path = _write(tmp_path, "chunked.csv", payload)
+    for chunk in range(1, len(payload) + 2):
+        monkeypatch.setattr(cli, "_HEADER_CHUNK_BYTES", chunk)
+        assert _read_header_bytes(path) == baseline, chunk
