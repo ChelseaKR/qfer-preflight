@@ -70,6 +70,23 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- `scripts/bench_large_file.py` printed a peak resident set size 1024 times
+  too small on Linux. `ru_maxrss` is in bytes on macOS and the BSDs and in
+  kilobytes on Linux, which `getrusage(2)` states and the reading itself does
+  not reveal, and the script divided by 1024 * 1024 on every platform. Linux
+  is the only platform the project runs automatically, since every job in
+  `ci.yml`, `release.yml` and `security.yml` is `runs-on: ubuntu-latest`, and
+  too small is the flattering direction for a figure `README.md` cites as the
+  evidence that memory stays bounded. At one decimal place the error did not
+  even read as an error: an ordinary run that reports `27.0 MiB` here printed
+  `0.0 MiB` there, which looks like a broken harness rather than a wrong
+  unit. The conversion is now a named function taking the platform, so the
+  unit rule is stated once and can be tested from both sides, and
+  `tests/test_bench_harness.py` holds it there: the same real memory has to
+  produce the same MiB figure whichever unit it arrives in, the superseded
+  arithmetic is pinned as the 0.0 it produced, and a live reading from the
+  test process has to land above 1 MiB, which the 1024x error cannot reach.
+
 - QP033's quote for `CEC-1306A-S2` was Schedule 1's wording, under a comment
   claiming the document reprints the same field definition in its Schedule 2
   section. It does not. The "CEC-1306A Schedule 2 Instructions" section of
