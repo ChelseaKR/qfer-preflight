@@ -70,6 +70,27 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- The streaming reader named the wrong byte, and called a valid byte invalid,
+  when a bad UTF-8 sequence straddled a chunk boundary. The incremental
+  decoder decodes its own leftover buffer followed by the new chunk, so its
+  error indices are measured from one to three bytes before the chunk begins
+  whenever the previous chunk ended on an incomplete but so far valid
+  character. Only the byte order mark's shift was undone, so the offset and
+  the byte both landed exactly `len(buffer)` late: the reported offset pointed
+  past the real offender and the byte quoted back to the filer was a byte that
+  is fine. QP001 is fail-closed, so when it fires that one sentence is the
+  whole actionable output, and at the shipped 1 MiB chunk size the case arises
+  in any filing over 1 MiB. Both bases are now undone together, and the
+  offending byte is read out of whichever of the two the index falls in. The
+  suite had been green because `tests/test_streaming.py` compared the chunked
+  scanner only against itself, through `validate_path` versus `validate_bytes`,
+  which both route through the same chunked reader. It now compares the
+  reported offset and byte against a whole-file `bytes.decode("utf-8-sig")`,
+  across five bad sequences chosen for how much of a character is held at the
+  boundary, with and without a byte order mark, at every chunk size from one
+  byte upward, plus the measured 1 MiB case at the shipped chunk size with
+  nothing monkeypatched.
+
 - `scripts/bench_large_file.py` printed a peak resident set size 1024 times
   too small on Linux. `ru_maxrss` is in bytes on macOS and the BSDs and in
   kilobytes on Linux, which `getrusage(2)` states and the reading itself does
