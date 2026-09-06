@@ -18,6 +18,9 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
+from .diff import NotComparable, diff_reports, load_report, new_error_appeared
+from .diff import to_json as diff_to_json
+from .diff import to_text as diff_to_text
 from .engine import TOOL_NAME, validate_path
 from .model import BatchEntry, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
@@ -93,6 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
     rules.add_argument("--format", choices=("text", "json"), default="text", help="output format")
 
     sub.add_parser("profiles", help="list the supported form profiles")
+
+    diff = sub.add_parser(
+        "diff",
+        help="compare two reports for the same filing and list what resolved, "
+        "what is new and what is unchanged",
+    )
+    diff.add_argument("before", help="a single-report JSON document from the earlier run")
+    diff.add_argument("after", help="a single-report JSON document from the later run")
+    diff.add_argument("--format", choices=("text", "json"), default="text", help="output format")
     return parser
 
 
@@ -371,6 +383,26 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_diff(args: argparse.Namespace) -> int:
+    """Say what changed between two runs over one filing.
+
+    Exit 1 only when an error-level finding is present now and was not before.
+    A run whose findings all resolved exits 0 even though plenty changed:
+    describing a change is not the same as objecting to one, and the filer is
+    running this precisely because something changed.
+    """
+    try:
+        before = load_report(Path(args.before))
+        after = load_report(Path(args.after))
+        diff = diff_reports(before, after)
+    except NotComparable as exc:
+        print(f"cannot compare these two reports: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    output = diff_to_json(diff) if args.format == "json" else diff_to_text(diff)
+    sys.stdout.write(output)
+    return EXIT_FINDINGS if new_error_appeared(diff) else EXIT_OK
+
+
 def _cmd_profiles(_: argparse.Namespace) -> int:
     for pid, profile in sorted(PROFILES.items()):
         print(f"{pid}")
@@ -389,6 +421,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "check": _cmd_check,
         "rules": _cmd_rules,
         "profiles": _cmd_profiles,
+        "diff": _cmd_diff,
     }
     return handlers[args.command](args)
 
