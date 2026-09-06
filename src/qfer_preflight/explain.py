@@ -178,11 +178,26 @@ def _value_payload(spec: RuleSpec, profiles: list[Profile], value: str) -> dict[
         payload["note"] = _UNREACHABLE_BY_CELL[kind]
         return payload
 
+    # A rule that does not apply to the forms asked about was never run against
+    # this value, which is not the same fact as a rule that ran and raised
+    # nothing. `--profile` names one form, and `_profiles_for` returns it
+    # whether or not the rule reaches it, so the applicable set can be empty.
+    # `_binding` above already reports non applicability as its own fact; this
+    # is that fact said once more, where it decides whether anything ran.
+    applicable = [profile for profile in profiles if spec.applies(profile)]
+    if not applicable:
+        payload["exercised"] = False
+        payload["note"] = (
+            f"{spec.id} was not run against this value: it does not apply to "
+            f"{', '.join(p.id for p in profiles)}. Applicability is derived from the "
+            "transcribed text rather than from a list of profile ids (ADR 0007). Nothing "
+            "here says what this value would do on a form the rule does reach."
+        )
+        return payload
+
     payload["exercised"] = True
     hits: list[dict[str, Any]] = []
-    for profile in profiles:
-        if not spec.applies(profile):
-            continue
+    for profile in applicable:
         for column in profile.header:
             for finding in check_one_cell(profile, column, value):
                 if finding.rule_id != spec.id:
@@ -192,7 +207,7 @@ def _value_payload(spec: RuleSpec, profiles: list[Profile], value: str) -> dict[
     if not hits:
         payload["note"] = (
             f"{spec.id} raised nothing for this value in any column of "
-            f"{', '.join(p.id for p in profiles if spec.applies(p))}. That is what this run "
+            f"{', '.join(p.id for p in applicable)}. That is what this run "
             "found, not a statement that the filing would pass: every other rule was still "
             "running against the empty cells around it."
         )
