@@ -185,6 +185,18 @@ Notes for this form:
   error, because this form's instructions do not mention extra headers. See
   ADR 0007.
 
+Why a rule says what it says, on this form:
+
+```sh
+uv run qfer-preflight explain QP024 --profile CEC-1306A-S1 --value 07
+```
+
+That prints the sentence the rule was transcribed from, the document and the
+locator it sits at, the severity and why it is that severity, and, where a
+value is given, what the engine itself says about that value. It invents
+nothing: every line of it is already in the registry or is the check's own
+message.
+
 ### CEC-1306A-S2
 
 CEC-1306A Schedule 2, UDC Retail Rate Description Quarterly Report.
@@ -217,6 +229,18 @@ Notes for this form:
 - QP018 is absent from the unevaluated list here only because this form has no
   NAICS column.
 
+Why a rule says what it says, on this form:
+
+```sh
+uv run qfer-preflight explain QP012 --profile CEC-1306A-S2
+```
+
+That prints the sentence the rule was transcribed from, the document and the
+locator it sits at, the severity and why it is that severity, and, where a
+value is given, what the engine itself says about that value. It invents
+nothing: every line of it is already in the registry or is the check's own
+message.
+
 ### CEC-1306B
 
 CEC-1306B, LSE Quarterly Report. Authority: California Code of Regulations,
@@ -247,6 +271,18 @@ Notes for this form:
   because this form's instructions say to exclude extra headers. On
   `CEC-1306A` and `CEC-1308B` the same row is an advisory. See ADR 0007.
 
+Why a rule says what it says, on this form:
+
+```sh
+uv run qfer-preflight explain QP022 --profile CEC-1306B
+```
+
+That prints the sentence the rule was transcribed from, the document and the
+locator it sits at, the severity and why it is that severity, and, where a
+value is given, what the engine itself says about that value. It invents
+nothing: every line of it is already in the registry or is the check's own
+message.
+
 ### CEC-1308B-S1
 
 CEC-1308B Schedule 1, Gas Utility Deliveries and Revenue Quarterly Report.
@@ -275,6 +311,18 @@ Notes for this form:
 - A data row that repeats the header row is an advisory on this form, not an
   error. See ADR 0007.
 
+Why a rule says what it says, on this form:
+
+```sh
+uv run qfer-preflight explain QP016 --profile CEC-1308B-S1
+```
+
+That prints the sentence the rule was transcribed from, the document and the
+locator it sits at, the severity and why it is that severity, and, where a
+value is given, what the engine itself says about that value. It invents
+nothing: every line of it is already in the registry or is the check's own
+message.
+
 ### CEC-1308C
 
 CEC-1308C, Gas Retailer Quarterly Report. Authority: California Code of
@@ -300,6 +348,18 @@ Notes for this form:
   defined in `docs/glossary.md`. QP015 compares them case sensitively.
 - A data row that repeats the header row is a QP007 **error** on this form.
   See ADR 0007.
+
+Why a rule says what it says, on this form:
+
+```sh
+uv run qfer-preflight explain QP015 --profile CEC-1308C
+```
+
+That prints the sentence the rule was transcribed from, the document and the
+locator it sits at, the severity and why it is that severity, and, where a
+value is given, what the engine itself says about that value. It invents
+nothing: every line of it is already in the registry or is the check's own
+message.
 
 ## A run that fails
 

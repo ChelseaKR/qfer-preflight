@@ -335,3 +335,54 @@ def test_glossary_lists_the_whole_closed_advisory_code_space() -> None:
     assert not missing, (
         f"{GLOSSARY.name} says the advisory code space is closed but does not list {missing}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Commands the guide prints, run as the guide prints them.
+#
+# The guide's CSV examples were already executed here. Its command lines were
+# not, so a command could name a rule that no longer exists, or a form the rule
+# does not apply to, and the page would go on telling a filer to run it.
+# ---------------------------------------------------------------------------
+
+_EXPLAIN_COMMAND = re.compile(r"^uv run qfer-preflight (explain .+)$", re.MULTILINE)
+
+
+def _explain_commands() -> list[list[str]]:
+    return [line.split() for line in _EXPLAIN_COMMAND.findall(_guide_text())]
+
+
+def test_the_guide_points_every_form_at_the_explain_verb() -> None:
+    """One command per form. A lower count means a section stopped carrying one and this
+    sweep would otherwise run over whatever was left."""
+    commands = _explain_commands()
+    assert len(commands) == len(PROFILES), (
+        f"the guide prints {len(commands)} explain commands for {len(PROFILES)} forms"
+    )
+    named = {arg for command in commands for arg in command}
+    for profile_id in PROFILES:
+        assert profile_id in named, f"no explain command in the guide names {profile_id}"
+
+
+def test_every_explain_command_the_guide_prints_actually_runs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    commands = _explain_commands()
+    assert commands, "no explain commands found in the guide; this check would prove nothing"
+    for command in commands:
+        code = main(command)
+        out = capsys.readouterr().out
+        assert code == EXIT_OK, f"the guide prints `{' '.join(command)}`, which exits {code}"
+        assert out.strip(), f"the guide prints `{' '.join(command)}`, which printed nothing"
+
+
+def test_every_rule_the_guide_explains_applies_to_the_form_it_is_shown_under() -> None:
+    """A command telling a filer to explain a rule against a form the rule does not reach
+    would print the "does not apply" note, which is a working command and a wrong page."""
+    for command in _explain_commands():
+        rule_id = command[1]
+        profile_id = command[command.index("--profile") + 1]
+        spec = RULE_SPECS_BY_ID[rule_id]
+        assert spec.applies(PROFILES[profile_id]), (
+            f"the guide shows `{' '.join(command)}`, but {rule_id} does not apply to {profile_id}"
+        )
