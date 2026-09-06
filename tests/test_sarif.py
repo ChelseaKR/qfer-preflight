@@ -167,6 +167,50 @@ def test_batch_mode_yields_one_run_per_input(capsys: pytest.CaptureFixture[str])
     assert by_name[missing]["invocations"][0]["executionSuccessful"] is False
 
 
+def test_an_input_that_was_never_validated_says_so_where_a_consumer_looks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The refusal reaches `toolExecutionNotifications`, not only `properties`.
+
+    This branch recorded the refusal in `run.properties.problem` alone, which is the
+    same extension bag the single-report rendering was corrected for using. A machine
+    reading this log saw an unsuccessful invocation, an empty `results` array, no
+    notification and no catalogued descriptor, and had nowhere in the standard to
+    learn that the filing was never validated or why: the run that checked nothing
+    said less, where consumers look, than the run that checked almost everything.
+
+    Level is `error` here and `warning` for an unevaluated rule, and the difference is
+    the point. A run that reached a verdict without checking everything is not the same
+    condition as an input for which no analysis ran at all.
+    """
+    clean = FIXTURES / "1306a_s1_clean.csv"
+    missing = "/nonexistent/nope.csv"
+    main(["check", str(clean), missing, "--format", "sarif"])
+    payload = json.loads(capsys.readouterr().out)
+    by_name = {run["properties"]["inputName"]: run for run in payload["runs"]}
+    run = by_name[missing]
+
+    notifications = run["invocations"][0]["toolExecutionNotifications"]
+    assert len(notifications) == 1
+    notification = notifications[0]
+    assert notification["level"] == "error"
+    assert missing in notification["message"]["text"]
+    assert "never validated" in notification["message"]["text"]
+    # The native reason survives into the notification, not only into properties.
+    assert "could not read" in notification["message"]["text"]
+
+    # The descriptor it names is catalogued, and the index resolves to it.
+    catalogue = run["tool"]["driver"]["notifications"]
+    position = notification["descriptor"]["index"]
+    assert catalogue[position]["id"] == notification["descriptor"]["id"]
+    assert catalogue[position]["defaultConfiguration"]["level"] == "error"
+
+    # And the sibling run, which did reach a verdict, still uses warning.
+    validated = by_name[str(clean)]
+    levels = {item["level"] for item in validated["invocations"][0]["toolExecutionNotifications"]}
+    assert levels == {"warning"}
+
+
 def test_sarif_rendering_is_deterministic(tmp_path: Path) -> None:
     profile = get_profile("CEC-1306A-S1")
     payload = (",".join(profile.header) + "\r\n123,2025,13,x\r\n").encode("utf-8")
