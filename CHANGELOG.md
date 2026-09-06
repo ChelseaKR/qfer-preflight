@@ -13,6 +13,27 @@ breaking change and is recorded here.
 
 ### Added
 
+- A status beside every item in `docs/ROADMAP.md`, and `tests/test_roadmap_claims.py`
+  to hold it there. Phases 1 and 2 were built and the document still described them as
+  forward work, which is how issues #33 to #40 came to be filed for finished work. Each
+  phase item now carries `**Status: shipped.**` with the evidence that proves it, or
+  `**Status: continuing.**` for growth work with no state to reach, and the `Sequencing`
+  table gained a matching `Status` column. The test derives the claims rather than
+  trusting them: a `shipped` item must name evidence, every path it names must exist,
+  every `path::symbol` must appear in that file, a shipped phase may not sit above an
+  unshipped item, and the table must agree with the item it points at.
+- The same test reads the figures the roadmap states out of the artifacts they describe,
+  because four of them had drifted and nothing was reading them. "Twenty-three
+  implemented rules" against a registry of twenty four; "three registered as permanently
+  unevaluated" against four, with QP034 missing from the list beside it; "an adversarial
+  corpus of twenty six hostile files" against twenty seven, the same drift
+  `tests/test_readme_claims.py` had already corrected in the README; and "Nine ADRs"
+  three hundred lines above this document's own "The ten that exist", which was right.
+  All four are corrected here, and each is now compared against the registry, the corpus,
+  `docs/adr/` or `pyproject.toml`. The corpus figure is also swept for across the whole
+  document, so a third sentence inventing a third number fails rather than passing
+  unread.
+
 - `docs/adr/0010-the-unallocated-rule-identifiers.md`, which answers a question
   the repository had left open: the rule sequence skips QP008, QP009 and QP026
   through QP029, next to a standing promise that identifiers are permanent and
