@@ -22,6 +22,9 @@ from .diff import NotComparable, diff_reports, load_report, new_error_appeared
 from .diff import to_json as diff_to_json
 from .diff import to_text as diff_to_text
 from .engine import TOOL_NAME, validate_path
+from .explain import ExplainError, explain
+from .explain import render_json as explain_json
+from .explain import render_text as explain_text
 from .model import BatchEntry, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
 from .report import (
@@ -94,6 +97,22 @@ def build_parser() -> argparse.ArgumentParser:
     rules = sub.add_parser("rules", help="list the rule registry with citations")
     rules.add_argument("--profile", help="limit to the rules that apply to one profile")
     rules.add_argument("--format", choices=("text", "json"), default="text", help="output format")
+
+    explain_parser = sub.add_parser(
+        "explain", help="print one rule's quote, locator and severity, and what a value does to it"
+    )
+    explain_parser.add_argument(
+        "name", help="a rule identifier such as QP024, or an advisory code such as ADV-BOM"
+    )
+    explain_parser.add_argument(
+        "--profile", help="read the rule as one form states it, rather than every form"
+    )
+    explain_parser.add_argument(
+        "--value", help="run the engine's own cell checks over this value and print what it says"
+    )
+    explain_parser.add_argument(
+        "--format", choices=("text", "json"), default="text", help="output format"
+    )
 
     sub.add_parser("profiles", help="list the supported form profiles")
 
@@ -383,6 +402,22 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_explain(args: argparse.Namespace) -> int:
+    """Re-render one rule out of the registry, and optionally run it over one value.
+
+    Exit 2 on an unknown identifier. An explanation of a rule that does not exist would be an
+    empty page, and an empty page reads as a rule with nothing to say about it.
+    """
+    try:
+        payload = explain(args.name, profile_id=args.profile, value=args.value)
+    except (ExplainError, KeyError) as exc:
+        message = exc.args[0] if exc.args else str(exc)
+        print(str(message), file=sys.stderr)
+        return EXIT_USAGE
+    sys.stdout.write(explain_json(payload) if args.format == "json" else explain_text(payload))
+    return EXIT_OK
+
+
 def _cmd_diff(args: argparse.Namespace) -> int:
     """Say what changed between two runs over one filing.
 
@@ -421,6 +456,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "check": _cmd_check,
         "rules": _cmd_rules,
         "profiles": _cmd_profiles,
+        "explain": _cmd_explain,
         "diff": _cmd_diff,
     }
     return handlers[args.command](args)

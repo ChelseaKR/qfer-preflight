@@ -13,6 +13,43 @@ breaking change and is recorded here.
 
 ### Added
 
+- `qfer-preflight explain <RULE_OR_ADV_CODE>`, with `--profile`, `--value` and
+  `--format json`. A finding names the rule and the offending value; until now the
+  filer who wanted to know why had `rules --profile`, which prints the whole
+  registry, and the filer guide, which is written per form rather than per rule.
+  `explain` prints one rule: the verbatim quote as transcribed with its document
+  and locator, resolved through `bind` so that a rule whose text differs per form
+  shows the text for the form asked about (ADR 0007); the severity; and for a
+  registered unevaluated rule its reason and the promotion condition it states.
+  An advisory code prints that no published rule covers what it reports, and why
+  the code space is closed (ADR 0004).
+- `--value` runs `engine.check_one_cell`, a new public entry point that places one
+  value in one column of an otherwise empty row and runs the engine's real row
+  checks over it. The message a filer reads is therefore the message the tool
+  produces rather than a second account of it that agrees today and drifts later.
+  No mapping from rule to column is maintained: the value is tried in each column
+  and the columns the rule reads are the columns it fires on. `explain QP024
+  --value 07` prints the published county table's entry for `7`, the workshop
+  deck quote at slide 19 rule 6, and the engine's own sentence saying that no
+  published source calls the padded form an error, so it is a warning.
+- Two absences are stated rather than left blank, which is the failure this
+  project exists to prevent. The instructions print example values for some
+  fields and none of that text is transcribed here, so the published-example
+  section says no example is recorded rather than printing nothing and letting
+  the blank read as the instructions giving none. And `--value` reaches only the
+  rules that read a cell: a structural rule reads the submission as an object and
+  a cross-row rule reads a column down the file, so for those it says one cell
+  cannot exercise the rule instead of reporting that nothing was found, which
+  would say a value passed a check that never ran. The rule's own `tags` decide
+  which, `rule_kind` refuses a rule whose tags name no kind rather than assuming
+  one, and `tests/test_explain.py` pins the vocabulary against the registry.
+- `docs/filer-guide.md` gains an `explain` command in each of the five form
+  sections, and `tests/test_filer_guide.py` now runs every command the guide
+  prints, checks that one exists per form, and checks that each names a rule that
+  applies to the form it is shown under. The guide's CSV examples were already
+  executed; its command lines were not, so a command could have named a rule that
+  no longer exists and the page would have gone on telling a filer to run it.
+
 - A status beside every item in `docs/ROADMAP.md`, and `tests/test_roadmap_claims.py`
   to hold it there. Phases 1 and 2 were built and the document still described them as
   forward work, which is how issues #33 to #40 came to be filed for finished work. Each

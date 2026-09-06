@@ -1276,6 +1276,30 @@ def _row_checks(
     _row_advisories(collector, profile, row, row_number)
 
 
+def check_one_cell(profile: Profile, column: str, value: str) -> list[Finding]:
+    """Every column-dependent rule, run against one cell, exactly as `check` runs them.
+
+    `explain --value` needs to say what the engine says about a value. Rewriting the checks
+    there would produce a second implementation that agrees with this one today and drifts
+    later, and the message a filer is shown would stop being the message the tool produces. So
+    the value is placed in a row that is otherwise empty and the real row checks are run over
+    it.
+
+    Every finding the row raised is returned, including the ones the empty cells earned. The
+    caller asked about one rule and filters to it; discarding the rest here would make this
+    function a judgement about which findings matter, which is not its job.
+
+    Only rules that read a cell can be reached this way. A structural rule reads the
+    submission as an object and a cross-row rule reads a column across rows, so neither can be
+    exercised by one cell, and `explain` says so rather than reporting that nothing was found.
+    """
+    row = [""] * len(profile.header)
+    row[profile.index_of(column)] = value
+    collector = _Collector(list(specs_for(profile)), profile)
+    _row_checks(collector, profile, row, 1, {"months": set(), "years": set()})
+    return collector.findings
+
+
 def _cross_row_checks(collector: _Collector, seen: dict[str, set[str]]) -> None:
     months = {int(m) for m in seen["months"]}
     if months:
