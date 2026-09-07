@@ -86,7 +86,7 @@ PARITY_EXEMPT = {
 }
 
 _SHA_PIN = re.compile(r"^[^@]+@[0-9a-f]{40}$")
-_FORMAT_CHOICES = re.compile(r"--format \{([a-z,]+)\}")
+_FORMAT_CHOICES = re.compile(r"--format \{([a-z,-]+)\}")
 _SUBCOMMANDS = re.compile(r"\{(check(?:,[a-z]+)*)\}")
 _LONG_OPTION = re.compile(r"--[a-z][a-z-]*")
 
@@ -170,7 +170,13 @@ def _shell(script: str) -> str:
 def test_the_help_readers_find_the_real_surface() -> None:
     """Readers returning nothing would make every parity check below vacuous."""
     assert {"--profile", "--strict", "--format"} <= _check_options()
-    assert _check_format_choices() == ("text", "json", "sarif")
+    assert _check_format_choices() == (
+        "text",
+        "json",
+        "sarif",
+        "findings-csv",
+        "findings-jsonl",
+    )
     assert "check" in _subcommands()
 
 
@@ -224,6 +230,15 @@ def test_every_action_input_that_names_a_flag_names_one_the_cli_has() -> None:
         )
 
 
+#: What the action's `format` input offers. Deliberately not every format the CLI
+#: has: `findings-csv` and `findings-jsonl` write the ungrouped findings TABLE, which
+#: is not a report. The action's contract is a report file plus an optional SARIF
+#: upload, and an input that made `report-path` point at something that is not a
+#: report -- and that says nothing about which rules were never evaluated -- would
+#: quietly weaken the one promise this action exists to keep on a CI surface.
+_ACTION_REPORT_FORMATS = ("text", "json", "sarif")
+
+
 def test_the_action_accepts_exactly_the_formats_the_cli_accepts() -> None:
     """A format accepted here and unknown to the CLI fails after the job started."""
     refusal = _shell(str(_action_steps()[0]["run"]))
@@ -232,11 +247,20 @@ def test_the_action_accepts_exactly_the_formats_the_cli_accepts() -> None:
     lines = refusal[refusal.index(marker) :].splitlines()[1:]
     pattern = next(line.strip() for line in lines if line.strip())
     accepted = tuple(pattern.split(")")[0].split("|"))
-    assert accepted == _check_format_choices(), (
-        f"the action accepts formats {accepted} and the CLI accepts {_check_format_choices()}"
+    cli = _check_format_choices()
+    unknown = [fmt for fmt in accepted if fmt not in cli]
+    assert not unknown, (
+        f"the action accepts {unknown}, which the CLI does not: the job would start "
+        f"and then fail. The CLI accepts {cli}"
+    )
+    assert accepted == _ACTION_REPORT_FORMATS, (
+        f"the action accepts {accepted}, and the report formats are "
+        f"{_ACTION_REPORT_FORMATS}. If a findings format is being added to the "
+        "action, `report-path` stops naming a report and this test is the place to "
+        "argue for that deliberately"
     )
     described = str(_action()["inputs"]["format"]["description"])
-    for choice in _check_format_choices():
+    for choice in accepted:
         assert choice in described, f"the format input does not mention {choice!r}"
 
 

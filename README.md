@@ -282,6 +282,42 @@ stops there, says how many it did not print, and points at `--format json`,
 which contains every one. ADR 0006 records the whole design, including the
 part of it that loses something.
 
+### The findings table, for a spreadsheet
+
+The report merges, and it has to. A filer fixing four hundred thousand rows does
+not want the merged view, though; they want a table they can sort and filter
+beside the filing.
+
+```sh
+uv run qfer-preflight check my-filing.csv --format findings-csv > findings.csv
+uv run qfer-preflight check my-filing.csv --format findings-jsonl > findings.jsonl
+```
+
+One line per **row and finding**: `row, column, rule_id, severity, cell,
+message`. Nothing merged, nothing withheld, sorted by row then rule, with
+file-level findings first. Advisories appear with an empty severity, because no
+published rule covers them.
+
+These rows are emitted as the single pass reaches them, and are never rebuilt
+from the report's merged findings. That is the whole design constraint: a merged
+finding keeps the first five example rows, so a table derived from one would
+print five lines under a header claiming a line per row, and a filer would fix
+five rows out of four hundred thousand and believe they were finished.
+
+**It is not the report, and it says so in its own header**, along with the run's
+status. A findings table with no lines is not a clean bill; the report is the
+only output that states which rules were never evaluated.
+
+Two flags: `--findings-bom` prefixes a UTF-8 byte order mark, which Excel needs
+and nothing else wants; `--findings-dir DIR` is required when a findings format
+is used over more than one input, because a batch writes one table per input and
+concatenating them would produce a table nobody can sort.
+
+Every field in the CSV is neutralised against spreadsheet formula injection. The
+tool already raises an advisory about a formula-looking cell in a *filing*; that
+hazard does not stop applying because the file is ours. The JSONL form is
+machine-read and is left exactly as the scan produced it.
+
 ## Supported profiles
 
 | Profile | Form | Authority cited by the form |
