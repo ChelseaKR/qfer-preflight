@@ -13,6 +13,34 @@ breaking change and is recorded here.
 
 ### Added
 
+- A publish path, `.github/workflows/publish-pypi.yml`, and a README section
+  that says what is installable today. `release.yml` made a GitHub release and
+  stopped there: there was no way to get this tool onto a package index, and
+  the README's Quickstart opened with `uv sync` without saying that a clone was
+  the only install there is. A reader who reached for `pip install
+  qfer-preflight` got nothing, and nothing in the repository told them why.
+
+  The new workflow is the shape `ca-tariff-parse` and `outcome-receipts`
+  already use here: dispatched by hand, never on a push, taking a tag
+  `release.yml` has already published; the allowed-signers guard first, then a
+  stable-SemVer check, the tag object type, `git verify-tag`, ancestry on
+  `main`, and a `gh release view` that refuses a tag no release was cut from;
+  a build at the verified commit whose filenames must carry the tag's own
+  version; and an upload job that never checks the repository out and holds
+  nothing but an OIDC token. No PyPI API token is stored anywhere and none is
+  wanted.
+
+  Nothing publishes on merge and nothing publishes on a tag. **The workflow is
+  inert until PyPI Trusted Publishing is registered, which is a web-UI action
+  only the project owner can take, and until she dispatches it.** The five
+  values that registration needs are in the workflow header and in the
+  README's new "Release and versioning" section, because a job that fails
+  closed with a trusted-publisher error and no instructions is a job nobody can
+  act on. Ten properties of the new workflow are held by
+  `tests/test_release_workflow.py`, and `tests/test_ci_action.py`'s
+  every-workflow-is-accounted-for check required it to be named and given a
+  reason before it could exist at all.
+
 - An `evaluation` ledger in every report: one entry per rule and per column it
   touches, saying how many rows the rule was offered, how many it judged, how
   many its own published applicability does not reach, and how many an earlier

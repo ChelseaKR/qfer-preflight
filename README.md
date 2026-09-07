@@ -20,11 +20,28 @@ rather than passed.
 
 ## Quickstart
 
+**Nothing here is on PyPI, so `pip install qfer-preflight` resolves to nothing.**
+The install is a clone plus [uv](https://docs.astral.sh/uv/), and everything below
+runs from it:
+
 ```sh
+git clone https://github.com/ChelseaKR/qfer-preflight
+cd qfer-preflight
 uv sync
 uv run qfer-preflight profiles
 uv run qfer-preflight check my-filing.csv --profile CEC-1306A-S1
 ```
+
+Releases are signed annotated tags, published as GitHub releases by
+`.github/workflows/release.yml`. A `publish-pypi` workflow exists alongside it and
+runs only when the maintainer dispatches it; the name `qfer-preflight` on PyPI is
+free and unclaimed, and uploading to it needs a one-time registration that has not
+been made, so no version of this tool is installable from an index today.
+[Release and versioning](#release-and-versioning) has the detail.
+
+Two things are usable without a clone, because they resolve against this
+repository rather than a package index: the composite GitHub Action, and the
+pre-commit hook. Both are described below.
 
 `--profile` may be omitted. When it is, the tool reads the file's header row
 and proceeds only on an exact match against one published template; zero
@@ -535,6 +552,43 @@ make verify
 That runs formatting, linting, typing, security scanning and the tests with
 the coverage floor, and is the same set CI runs.
 
+## Release and versioning
+
+Two workflows, both dispatch-only, both refusing to act on anything but a stable
+`vX.Y.Z` tag that is annotated, signed by a key named in
+`.github/allowed_signers`, and already reachable from `main`. Neither runs on a
+push, because a `push: tags:` workflow runs the definition stored at the tagged
+ref, which would hand the release authority to whoever can push a tag.
+
+- `release.yml` re-runs `make verify` at the tagged commit, requires the tag and
+  the `pyproject.toml` version to agree, and creates the GitHub release with the
+  signed tag annotation as its notes.
+- `publish-pypi.yml` takes a tag `release.yml` has already published, re-verifies
+  it against `main`, builds the sdist and wheel at that commit, checks the built
+  filenames carry the tag's own version, and uploads over PyPI Trusted Publishing.
+  It never checks the repository out in the job that can upload, and it holds no
+  credential: publication is an OIDC token exchange, so there is no PyPI API token
+  in this repository's secrets and none is wanted.
+
+**Nothing has been published to PyPI, and `publish-pypi.yml` cannot publish
+anything until it is.** Trusted Publishing needs a one-time registration on
+pypi.org that only the project owner can make, under *Your projects* then
+*Publishing*, or *Add a pending publisher* while the project does not exist yet:
+
+| Field | Value |
+|---|---|
+| PyPI Project Name | `qfer-preflight` |
+| Owner | `ChelseaKR` |
+| Repository name | `qfer-preflight` |
+| Workflow name | `publish-pypi.yml` |
+| Environment name | `pypi` |
+
+Until that exists the publish job fails closed at the upload with PyPI's own
+trusted-publisher error and nothing is uploaded. `tests/test_release_workflow.py`
+holds the properties of both workflows, including that no token is stored, that
+the publishing job never checks out repository content, and that the five values
+above stay written down where somebody hitting the failure will find them.
+
 ## Standards Conformance
 
 Every standard below is `Applies`, `Applies (gap tracked in #NN)`, or
@@ -546,7 +600,7 @@ Every standard below is `Applies`, `Applies (gap tracked in #NN)`, or
 | Code Quality | Applies |
 | Security & Supply-Chain | Applies |
 | CI/CD | Applies |
-| Release & Versioning | Applies |
+| Release & Versioning | Applies. Signed annotated tags verified against `.github/allowed_signers`, dispatch-only workflows, GitHub releases carrying the signed annotation as their notes. Nothing is published to a package index: see [Release and versioning](#release-and-versioning). |
 | Observability | Applies: lowest tier. An offline single-run CLI emits no telemetry by design; the run report is the only output. |
 | Performance | N/A: no hosted route and no browser bundle, so there is no latency or bundle budget to hold. Work is bounded by local CSV size. |
 | Accessibility | N/A: no HTML or UI surface. Output is plain text or JSON on stdout. |

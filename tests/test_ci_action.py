@@ -72,6 +72,13 @@ PARITY_EXEMPT = {
     # Release time verification of a signed tag, not a gate over the working
     # tree. Exercised by tests/test_release_workflow.py.
     "release.yml",
+    # Publish time verification of a tag release.yml has already published,
+    # plus the upload itself. Same reason as release.yml: it verifies a signed
+    # tag and builds at that commit, and none of it is something a contributor
+    # runs locally before pushing. Exercised by
+    # tests/test_release_workflow.py, which holds the properties that decide
+    # whether it can publish at all.
+    "publish-pypi.yml",
     # Runs the published composite action and the published pre-commit hook.
     # No make target reproduces a GitHub Actions job status, which is the thing
     # under test. Exercised by this file.
