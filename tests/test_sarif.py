@@ -37,6 +37,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 _SARIF_VERSION = "2.1.0"
 _SCHEMA_SUFFIX = "sarif-schema-2.1.0.json"
+# Pin the whole URL, not just its tail. A suffix check passes for any host, which
+# is how this report shipped a $schema pointing at a 404 for as long as it did:
+# the dead raw.githubusercontent.com/.../master/Schemata/ path ends in exactly
+# the same filename as the live one.
+_SCHEMA_URL = (
+    "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
+)
+_DEAD_SCHEMA_HOST_PATH = "raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata"
 
 _UNEVALUATED_ID = "qfer/rule-not-evaluated"
 _UNVALIDATED_ID = "qfer/not-reported-as-clean"
@@ -447,3 +455,21 @@ def test_a_run_with_nothing_left_unsaid_carries_no_notifications() -> None:
     assert "notifications" not in run["tool"]["driver"]
     assert "toolExecutionNotifications" not in run["invocations"][0]
     assert run["invocations"][0]["executionSuccessful"] is True
+
+
+def test_the_schema_url_is_the_canonical_one_and_not_the_dead_mirror() -> None:
+    """A $schema a consumer cannot fetch is a citation to nothing.
+
+    The suffix assertion elsewhere in this file cannot catch this: the dead
+    raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/ path ends in
+    the same filename as the canonical OASIS one. Measured 2026-09-07 -- that
+    path returns 404 while this URL returns 200. Offline by construction: this
+    pins the string, it does not fetch it.
+    """
+    profile = get_profile("CEC-1306A-S1")
+    report = validate_bytes(
+        (FIXTURES / "1306a_s1_dirty.csv").read_bytes(), profile, "1306a_s1_dirty.csv"
+    )
+    doc = report_to_sarif_dict(report)
+    assert doc["$schema"] == _SCHEMA_URL
+    assert _DEAD_SCHEMA_HOST_PATH not in doc["$schema"]

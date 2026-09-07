@@ -170,8 +170,13 @@ _NOT_VALIDATED_NOTIFICATION_ID = "qfer/input-not-validated"
 # a SARIF consumer is told that the analysis itself failed.
 _REFUSAL_NOTIFICATION_LEVEL = "error"
 
+# The canonical OASIS-published location. The widely-copied
+# raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/ URL that
+# circulates in tooling is dead -- that path returns 404 -- so a report carrying
+# it points a consumer at nothing. Verified 2026-09-07: this URL answers 200 and
+# is the `id` the OASIS schema declares for itself.
 _SARIF_SCHEMA = (
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+    "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
 )
 
 _TOOL_URI = "https://github.com/ChelseaKR/qfer-preflight"
