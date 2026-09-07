@@ -15,7 +15,7 @@ import argparse
 import csv
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import __version__
@@ -23,10 +23,15 @@ from .detect import read_header_bytes
 from .diff import NotComparable, diff_reports, load_report, new_error_appeared
 from .diff import to_json as diff_to_json
 from .diff import to_text as diff_to_text
-from .engine import TOOL_NAME, validate_path
+from .engine import TOOL_NAME, FindingRow, validate_path
 from .explain import ExplainError, explain
 from .explain import render_json as explain_json
 from .explain import render_text as explain_text
+from .findings_table import (
+    TableHeader,
+    render_findings_csv,
+    render_findings_jsonl,
+)
 from .model import BatchEntry, Report, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
 from .report import (
@@ -85,7 +90,33 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     check.add_argument(
-        "--format", choices=("text", "json", "sarif"), default="text", help="output format"
+        "--format",
+        choices=("text", "json", "sarif", "findings-csv", "findings-jsonl"),
+        default="text",
+        help=(
+            "output format. `findings-csv` and `findings-jsonl` write the ungrouped "
+            "findings table -- one line per row and finding -- which is NOT the report "
+            "and does not state which rules were never evaluated"
+        ),
+    )
+    check.add_argument(
+        "--findings-bom",
+        action="store_true",
+        help=(
+            "prefix the findings table with a UTF-8 byte order mark. Off by default "
+            "because it is not wanted anywhere else; Excel needs it to stop reading "
+            "the file as the local code page"
+        ),
+    )
+    check.add_argument(
+        "--findings-dir",
+        metavar="DIR",
+        help=(
+            "where to write one findings table per input, required when a findings "
+            "format is used over more than one input. A batch writes a table per "
+            "input and never one across inputs, because a table that concatenated "
+            "two filings could not be sorted without mixing them"
+        ),
     )
     check.add_argument(
         "--strict",
@@ -214,7 +245,9 @@ def _expand_inputs(paths: Sequence[str]) -> tuple[list[str] | None, str | None]:
     return expanded, None
 
 
-def _validate_one(path: str, profile: Profile | None) -> BatchEntry:
+def _validate_one(
+    path: str, profile: Profile | None, sink: Callable[[FindingRow], None] | None = None
+) -> BatchEntry:
     """Validate a single input for the batch, never raising.
 
     Every refusal becomes an entry that says what happened, because in a batch
@@ -228,7 +261,7 @@ def _validate_one(path: str, profile: Profile | None) -> BatchEntry:
             return BatchEntry(input_name=path, problem=problem or "profile detection failed")
         chosen = detected
     try:
-        return BatchEntry(input_name=path, report=validate_path(path, chosen))
+        return BatchEntry(input_name=path, report=validate_path(path, chosen, sink))
     except OSError as exc:
         return BatchEntry(input_name=path, problem=f"could not read {path}: {exc}")
 
@@ -297,12 +330,44 @@ def _report_ledger_gaps(input_name: str, report: Report) -> bool:
     return True
 
 
+#: The two formats that write the ungrouped table rather than the report.
+_FINDINGS_FORMATS = ("findings-csv", "findings-jsonl")
+
+
+def _findings_output(
+    entry: BatchEntry, rows: Sequence[FindingRow], fmt: str, *, byte_order_mark: bool
+) -> str:
+    """Render one input's findings table.
+
+    `entry.report` is not optional here in practice -- a caller that could not
+    produce a report takes the refusal path before this -- but the header still
+    states every field as absent rather than guessing, because a table whose
+    provenance is unknown is worth less than one that says so.
+    """
+    report = entry.report
+    header = TableHeader(
+        tool=TOOL_NAME,
+        tool_version=__version__,
+        profile_id=report.profile_id if report is not None else None,
+        input_name=report.input_name if report is not None else entry.input_name,
+        input_sha256=report.input_sha256 if report is not None else None,
+        rows_read=report.rows_read if report is not None else None,
+        status=str(report.status) if report is not None else "unvalidated",
+        lines=len(rows),
+    )
+    if fmt == "findings-jsonl":
+        return render_findings_jsonl(header, rows)
+    return render_findings_csv(header, rows, byte_order_mark=byte_order_mark)
+
+
 def _check_single(path: str, args: argparse.Namespace) -> int:
     profile, problem = _resolve_profile(args)
     if problem is not None:
         print(problem, file=sys.stderr)
         return EXIT_USAGE
-    entry = _validate_one(path, profile)
+    collected: list[FindingRow] = []
+    sink = collected.append if args.format in _FINDINGS_FORMATS else None
+    entry = _validate_one(path, profile, sink)
     if entry.report is None:
         # Reachable when --profile was omitted and detection refused the
         # header: single-file mode reports that refusal on stderr, exactly as
@@ -311,7 +376,9 @@ def _check_single(path: str, args: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     output = (
-        report_to_sarif(entry.report)
+        _findings_output(entry, collected, args.format, byte_order_mark=args.findings_bom)
+        if args.format in _FINDINGS_FORMATS
+        else report_to_sarif(entry.report)
         if args.format == "sarif"
         else to_json(entry.report)
         if args.format == "json"
@@ -335,6 +402,9 @@ def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
     if problem is not None:
         print(problem, file=sys.stderr)
         return EXIT_USAGE
+
+    if args.format in _FINDINGS_FORMATS:
+        return _check_batch_findings(paths, profile, args)
 
     entries = [_validate_one(path, profile) for path in paths]
 
@@ -362,6 +432,75 @@ def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
         for status in statuses
     )
     if had_findings:
+        return EXIT_FINDINGS
+    if gaps and any(gaps):
+        return EXIT_FINDINGS
+    if any(entry.problem is not None for entry in entries):
+        return EXIT_USAGE
+    return EXIT_OK
+
+
+def _check_batch_findings(
+    paths: Sequence[str], profile: Profile | None, args: argparse.Namespace
+) -> int:
+    """One findings table per input, written as files. Never one table across inputs.
+
+    A concatenated table cannot be sorted: sorting by row would interleave two
+    filings whose row numbers mean different things. So a batch writes files, and
+    refuses rather than guessing where to put them.
+
+    The exit code is the batch contract unchanged. Writing tables is an output
+    choice and must not make a failing run look like a passing one.
+    """
+    if args.findings_dir is None:
+        print(
+            f"--format {args.format} over {len(paths)} inputs needs --findings-dir: "
+            "a batch writes one table per input, and concatenating them into one "
+            "stream would produce a table nobody can sort.",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+
+    directory = Path(args.findings_dir)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"could not use {directory} for findings tables: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    suffix = "csv" if args.format == "findings-csv" else "jsonl"
+    entries: list[BatchEntry] = []
+    for path in paths:
+        collected: list[FindingRow] = []
+        entry = _validate_one(path, profile, collected.append)
+        entries.append(entry)
+        if entry.report is None:
+            # No table for an input that produced no report. Writing an empty one
+            # would be a file that reads as "nothing found here", which is the
+            # opposite of what happened.
+            print(f"{path}: {entry.problem or 'could not validate'}", file=sys.stderr)
+            continue
+        destination = directory / f"{Path(entry.input_name).stem}.findings.{suffix}"
+        try:
+            destination.write_text(
+                _findings_output(entry, collected, args.format, byte_order_mark=args.findings_bom),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            print(f"could not write {destination}: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+        print(f"{destination}: {len(collected)} line(s)")
+
+    gaps = args.strict_ledger and [
+        _report_ledger_gaps(entry.input_name, entry.report)
+        for entry in entries
+        if entry.report is not None
+    ]
+    statuses = [entry.report.status for entry in entries if entry.report is not None]
+    if any(
+        status is Status.FAIL or (args.strict and status is Status.UNVALIDATED)
+        for status in statuses
+    ):
         return EXIT_FINDINGS
     if gaps and any(gaps):
         return EXIT_FINDINGS

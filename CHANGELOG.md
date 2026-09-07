@@ -13,6 +13,46 @@ breaking change and is recorded here.
 
 ### Added
 
+- A findings table, for the spreadsheet the filing came out of.
+  `check --format findings-csv` and `--format findings-jsonl` write one line per
+  **row and finding** -- `row, column, rule_id, severity, cell, message` -- with
+  nothing merged and nothing withheld, sorted by row then rule, file-level findings
+  first, advisories carried with an empty severity because no published rule covers
+  them. The report merges an identical finding across rows and has to; a filer
+  fixing four hundred thousand rows needs the ungrouped view beside their data.
+
+  **The rows are emitted during the single pass and are never rebuilt from the
+  report.** That is the design constraint rather than an implementation detail: a
+  merged `Finding` keeps `occurrences`, the first row, the first five `example_rows`
+  and the last, so a table expanded from one would print five lines under a header
+  claiming a line per row. A filer would sort it, fix what it listed, re-run and
+  find the filing still rejected. `engine.FindingSink` is called once per
+  occurrence, the renderer never sees a `Finding`, and
+  `test_a_repeated_finding_produces_one_line_per_row_not_one_per_group` pins it over
+  a forty-row filing -- a fixture wide enough that merging genuinely happens, because
+  the existing dirty fixture merges nothing and would have passed either way.
+
+  The table states in its own header that it is not the report, and carries the
+  run's `status`. A zero-line table is not a clean bill, and the report remains the
+  only output that says which rules were never evaluated.
+
+  Every CSV field is neutralised against spreadsheet formula injection, whitespace
+  considered, because a spreadsheet strips leading whitespace before deciding
+  whether it is looking at a formula. On the messages this tool emits today no field
+  begins with a formula leader, so this is defence in depth rather than a live
+  exploit; it is tested over synthetic hostile rows rather than real findings,
+  because a fixture built from real findings would sit where the failure is
+  impossible and would pass whether the neutraliser worked or not. `--findings-bom`
+  adds the byte order mark Excel needs. A batch writes one table per input through
+  `--findings-dir` and refuses to concatenate them, because a concatenated table
+  cannot be sorted without interleaving two filings whose row numbers mean different
+  things.
+
+  The GitHub Action deliberately does **not** offer these two formats. Its contract
+  is a report file plus an optional SARIF upload, and an input that made
+  `report-path` name something that is not a report would quietly weaken the one
+  promise the action exists to keep.
+
 - A publish path, `.github/workflows/publish-pypi.yml`, and a README section
   that says what is installable today. `release.yml` made a GitHub release and
   stopped there: there was no way to get this tool onto a package index, and

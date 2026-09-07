@@ -244,6 +244,29 @@ def _numeric_suggestion(value: str) -> str:
     return f" Written the way the instructions ask, this value is {stripped}."
 
 
+@dataclass(frozen=True, slots=True)
+class FindingRow:
+    """One occurrence of one finding, ungrouped, as it happened.
+
+    This is deliberately not a `Finding`. A `Finding` is the merged, reportable
+    object and carries `occurrences`; this is the single row behind one of them,
+    emitted while the scan is running and never retained. `severity` is a plain
+    string rather than the enum because an advisory has none, and an empty
+    severity is the honest rendering of "no published rule covers this".
+    """
+
+    row: int | None
+    column: str | None
+    rule_id: str
+    severity: str
+    cell: str | None
+    message: str
+
+
+#: Called once per finding occurrence, in the order the scan reaches them.
+FindingSink = Callable[[FindingRow], None]
+
+
 @dataclass(slots=True)
 class _FindingGroup:
     """One finding and every row that produced exactly the same one.
@@ -290,9 +313,25 @@ class _FindingGroup:
 class _Collector:
     """Accumulates findings and tracks which rules actually ran."""
 
-    def __init__(self, specs: Sequence[RuleSpec], profile: Profile | None = None) -> None:
+    def __init__(
+        self,
+        specs: Sequence[RuleSpec],
+        profile: Profile | None = None,
+        sink: FindingSink | None = None,
+    ) -> None:
         self._specs = {spec.id: spec for spec in specs}
         self._profile = profile
+        # The ungrouped view. `_groups` below merges an identical finding across
+        # rows so that 400,000 bad counties cost one object, which is right for a
+        # report and wrong for a spreadsheet: a filer fixing those rows needs a
+        # line per row. Reconstructing that from a merged group is impossible --
+        # the group keeps `example_rows`, the FIRST FIVE, and a table built from
+        # those would claim to be one line per row while silently holding five.
+        # That is this portfolio's dominant defect wearing a CSV's clothes, so
+        # the ungrouped view is emitted HERE, as each occurrence happens, and is
+        # never derived afterwards. The sink writes and forgets, so nothing about
+        # this grows with the size of the filing.
+        self._sink = sink
         # Keyed by rule, column and the message text, which is what makes two
         # findings the same finding. Insertion order is first-seen order.
         self._groups: dict[tuple[str, str, str], _FindingGroup] = {}
@@ -377,6 +416,17 @@ class _Collector:
             )
         else:
             group.record(row)
+        if self._sink is not None:
+            self._sink(
+                FindingRow(
+                    row=row,
+                    column=column,
+                    rule_id=rule_id,
+                    severity=spec.severity.value,
+                    cell=self._cell_reference(row, column),
+                    message=message,
+                )
+            )
         self._note_cell(row, column)
 
     def _note_cell(self, row: int | None, column: str | None) -> None:
@@ -398,6 +448,21 @@ class _Collector:
         """Record something no published rule covers, aggregated per column."""
         key = (code, column or "")
         self._advisory_counts[key] = self._advisory_counts.get(key, 0) + 1
+        if self._sink is not None:
+            # Every advisory occurrence, not only the first `_ADVISORY_EXAMPLES`.
+            # The report keeps examples; the table keeps rows. An advisory carries
+            # no severity because no published rule covers it, and the column is
+            # left empty rather than invented.
+            self._sink(
+                FindingRow(
+                    row=row,
+                    column=column,
+                    rule_id=code,
+                    severity="",
+                    cell=self._cell_reference(row, column),
+                    message=message,
+                )
+            )
         if self._advisory_counts[key] > _ADVISORY_EXAMPLES:
             return
         self._advisories[(code, f"{column or ''}#{self._advisory_counts[key]}")] = Advisory(
@@ -1882,6 +1947,7 @@ def _validate_ingest(
     profile: Profile,
     input_name: str,
     reopen: Callable[[], io.BufferedIOBase],
+    sink: FindingSink | None = None,
 ) -> Report:
     """Drive the fail-closed decision tree from what one pass observed.
 
@@ -1893,7 +1959,7 @@ def _validate_ingest(
     that memory does not grow with the filing.
     """
     specs = specs_for(profile)
-    collector = _Collector(specs, profile)
+    collector = _Collector(specs, profile, sink=sink)
     collector.register_unimplemented()
 
     report = Report(
@@ -1966,7 +2032,9 @@ def _validate_ingest(
         binary.close()
 
 
-def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
+def validate_bytes(
+    data: bytes, profile: Profile, input_name: str, sink: FindingSink | None = None
+) -> Report:
     """Validate one submission held in memory.
 
     This and `validate_path` are two entrances to one implementation. The
@@ -1980,10 +2048,11 @@ def validate_bytes(data: bytes, profile: Profile, input_name: str) -> Report:
         profile,
         input_name,
         lambda: io.BytesIO(data),
+        sink,
     )
 
 
-def validate_path(path: str, profile: Profile) -> Report:
+def validate_path(path: str, profile: Profile, sink: FindingSink | None = None) -> Report:
     """Validate a submission on disk.
 
     Two passes, each bounded: this one collects the file-level facts without
@@ -1997,7 +2066,7 @@ def validate_path(path: str, profile: Profile) -> Report:
     def reopen() -> io.BufferedIOBase:
         return open(path, "rb")
 
-    return _validate_ingest(ingest, profile, os.path.basename(path), reopen)
+    return _validate_ingest(ingest, profile, os.path.basename(path), reopen, sink)
 
 
 def _parse_failure(
