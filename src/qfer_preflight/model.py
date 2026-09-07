@@ -57,6 +57,14 @@ def severity_rank(severity: str) -> int:
 # field, changing a type, or tightening a constraint that existing reports
 # satisfy is breaking: write the new major version of the schema file and bump
 # this number in the same commit.
+#
+# The minor revision is not carried in the payload and never has been. A report
+# states the major version it conforms to, and a reader who wants to know which
+# additive fields a given major version has grown reads `minorVersion` in
+# docs/schemas/report-v1.schema.json, where every minor revision is recorded.
+# Adding a `schema_minor` field to the report would itself be the kind of change
+# it exists to announce, so the number lives with the schema rather than beside
+# it. `tests/test_report_schema.py` pins the literal.
 REPORT_SCHEMA_VERSION = 1
 
 
@@ -235,6 +243,140 @@ class NotEvaluated:
         return {"rule_id": self.rule_id, "reason": self.reason}
 
 
+# What a ledger entry counts, one unit at a time. A row rule is offered data
+# rows, the header rule is offered the one header row, and a rule about the
+# submission as an object is offered the file. Naming the unit is not
+# decoration: without it a reader cannot tell "judged 1 of 1 file" from
+# "judged 1 of 400,000 rows", and the first would look like a rule that had
+# almost stopped running.
+LEDGER_SUBJECTS: tuple[str, ...] = ("file", "header", "row")
+
+# Why a rule judged nothing. The closed vocabulary exists because the number
+# zero is exactly what this project refuses to publish on its own: a rule that
+# judged no rows and a rule that was never asked to look are different facts,
+# and a bare 0 is read as the second, or as nothing at all.
+LEDGER_ZERO_REASONS: dict[str, str] = {
+    "no_applicable_rows": (
+        "The rule ran and no row fell inside the applicability its own published "
+        "text states, so it reached no verdict on this file."
+    ),
+    "blocked_by": (
+        "An earlier rule left the cells unreadable, so this rule could not be "
+        "applied. The rule that stopped it is named in blocked_by."
+    ),
+    "column_absent": (
+        "This form's published template carries no column this rule reads, so "
+        "the rule does not apply to the form at all."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerEntry:
+    """How many rows one rule judged on one column of this file.
+
+    This is a measurement of the run, not a rule. It carries no severity, it
+    produces no finding, and it moves no verdict. What it does is answer the
+    question `rules_evaluated` cannot: a rule can be listed there, correctly,
+    having read every row and judged none of them.
+
+    Four numbers, and they add up. `offered` is how many units the reader
+    handed this rule, `judged` how many it reached a verdict on, `exempt` how
+    many its own published applicability does not reach, and `blocked` how
+    many an earlier rule left unreadable. `offered` is not derived at read
+    time and then trusted: the constructor refuses an entry whose parts do not
+    sum to it, because a ledger whose arithmetic does not close is a ledger
+    that has quietly lost rows.
+
+    `zero_reason` is present exactly when `judged` is zero, and never
+    otherwise. That is the whole point of the type. A zero with a reason
+    attached says which of three different things happened; a zero on its own
+    says none of them, and reads as "fine".
+    """
+
+    rule_id: str
+    column: str | None
+    subject: str
+    evaluated: bool
+    offered: int
+    judged: int
+    exempt: int
+    blocked: int
+    zero_reason: str | None = None
+    blocked_by: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.subject not in LEDGER_SUBJECTS:
+            raise ValueError(
+                f"ledger entry for {self.rule_id} names subject {self.subject!r}, "
+                f"which is not one of {', '.join(LEDGER_SUBJECTS)}. The unit a "
+                "count is in has to be one a reader can look up"
+            )
+        for name, value in (
+            ("offered", self.offered),
+            ("judged", self.judged),
+            ("exempt", self.exempt),
+            ("blocked", self.blocked),
+        ):
+            if value < 0:
+                raise ValueError(f"ledger entry for {self.rule_id} counts {value} {name}")
+        if self.judged + self.exempt + self.blocked != self.offered:
+            raise ValueError(
+                f"ledger entry for {self.rule_id} was offered {self.offered} but "
+                f"accounts for {self.judged + self.exempt + self.blocked} "
+                "(judged plus exempt plus blocked). A ledger that does not close "
+                "has lost rows somewhere, and a lost row reads as a checked one"
+            )
+        if (self.zero_reason is None) == (self.judged == 0):
+            raise ValueError(
+                f"ledger entry for {self.rule_id} judged {self.judged} rows and "
+                f"gives zero_reason {self.zero_reason!r}. A reason is stated "
+                "exactly when nothing was judged: without one the zero reads as "
+                "a clean result, and with one beside a real count it reads as a "
+                "contradiction"
+            )
+        if self.zero_reason is not None and self.zero_reason not in LEDGER_ZERO_REASONS:
+            raise ValueError(
+                f"ledger entry for {self.rule_id} gives zero_reason "
+                f"{self.zero_reason!r}, which is not in the closed vocabulary "
+                f"{', '.join(sorted(LEDGER_ZERO_REASONS))}"
+            )
+        names_blocker = self.blocked > 0 or self.zero_reason == "blocked_by"
+        if names_blocker and self.blocked_by is None:
+            raise ValueError(
+                f"ledger entry for {self.rule_id} says rows were blocked but does "
+                "not name the rule that blocked them, so the reader cannot go and "
+                "look at it"
+            )
+        if not names_blocker and self.blocked_by is not None:
+            raise ValueError(
+                f"ledger entry for {self.rule_id} names blocker {self.blocked_by!r} "
+                "while reporting nothing blocked"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "rule_id": self.rule_id,
+            # Written even when it is null, unlike every other optional field
+            # in this module. The ledger is a table and a reader walks it
+            # column by column; a row that simply lacks the key would have to
+            # be told apart from one whose rule reads no column, and `subject`
+            # is the field that says which.
+            "column": self.column,
+            "subject": self.subject,
+            "evaluated": self.evaluated,
+            "offered": self.offered,
+            "judged": self.judged,
+            "exempt": self.exempt,
+            "blocked": self.blocked,
+        }
+        if self.zero_reason is not None:
+            payload["zero_reason"] = self.zero_reason
+        if self.blocked_by is not None:
+            payload["blocked_by"] = self.blocked_by
+        return payload
+
+
 # The complete advisory code space. Nothing outside this table can be
 # constructed, so a new advisory cannot be introduced by writing one line
 # somewhere in the engine: it has to be registered here, next to the four
@@ -330,6 +472,10 @@ class Report:
     rules_not_evaluated: list[NotEvaluated] = field(default_factory=list)
     advisories: list[Advisory] = field(default_factory=list)
     rows_read: int = 0
+    # What each rule actually read on this file. Empty on a report built by
+    # hand; every report the engine produces carries one entry per rule and
+    # column. See `LedgerEntry`.
+    evaluation: list[LedgerEntry] = field(default_factory=list)
 
     def checked_findings(self) -> list[Finding]:
         """The finding list, refusing anything that is not a `Finding`.
@@ -445,6 +591,10 @@ class Report:
                     self.checked_advisories(),
                     key=lambda a: (a.code, a.row if a.row is not None else -1, a.column or ""),
                 )
+            ],
+            "evaluation": [
+                entry.to_dict()
+                for entry in sorted(self.evaluation, key=lambda e: (e.rule_id, e.column or ""))
             ],
         }
 

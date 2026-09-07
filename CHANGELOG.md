@@ -13,6 +13,41 @@ breaking change and is recorded here.
 
 ### Added
 
+- An `evaluation` ledger in every report: one entry per rule and per column it
+  touches, saying how many rows the rule was offered, how many it judged, how
+  many its own published applicability does not reach, and how many an earlier
+  rule left unreadable, with that rule named. `rules_evaluated` lists
+  identifiers and `docs/column-coverage.md` maps columns to rules in the
+  abstract; neither says what happened on the file in front of you, and a rule
+  can be listed as evaluated, correctly, having read every row and judged none
+  of them. That is the next version of `Findings: none` reading as clean.
+- Zero judged is published as zero with its reason attached. `zero_reason` is
+  one of `no_applicable_rows`, `blocked_by` or `column_absent`, is present
+  exactly when nothing was judged and never otherwise, and `evaluated` beside it
+  separates a rule that ran and judged nothing from one that never ran. The four
+  counts have to sum to what the rule was offered and `LedgerEntry` refuses an
+  entry where they do not, because a ledger that has quietly lost rows reports
+  them as checked.
+- Five places where a rule declines to reach a verdict are now recorded as
+  exemptions rather than passing silently for having produced no finding: QP023
+  on a NAICS code that is not a residential classification code, QP033 on a
+  blank company number, QP020 on a cell holding the placeholder QP019 covers,
+  QP013 on a zero-padded county and QP014 on a Customer Type the instructions
+  and the workshop deck disagree about. The last two are ADR 0003 and ADR 0005
+  in the ledger rather than only in the message text.
+- `--strict-ledger`, which exits non-zero when any rule judged no rows on a
+  column this form carries, and names them on stderr. A clean filing can fail
+  it: on `CEC-1308B-S1` a file of ordinary six-digit NAICS codes leaves QP023
+  with nothing in its published scope, and the flag exists to say so.
+- Report schema minor revision 1.1. `evaluation` is optional rather than
+  required, so a report written by an earlier version is still a valid version 1
+  report; `schema_version` stays 1. The minor number is recorded as
+  `minorVersion` in `docs/schemas/report-v1.schema.json`, with its history, and
+  pinned by `tests/test_report_schema.py`.
+- `tests/test_evaluation_ledger.py` derives the ledger's rule to column map from
+  `docs/column-coverage.md`, in both directions, so a rule the registry runs and
+  the ledger never counts fails the suite rather than reporting zero forever.
+
 - `qfer-preflight explain <RULE_OR_ADV_CODE>`, with `--profile`, `--value` and
   `--format json`. A finding names the rule and the offending value; until now the
   filer who wanted to know why had `rules --profile`, which prints the whole

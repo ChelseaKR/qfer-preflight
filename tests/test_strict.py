@@ -145,6 +145,119 @@ def test_strict_json_output_still_parses_and_names_what_was_skipped() -> None:
 def test_strict_defaults_to_off() -> None:
     args = build_parser().parse_args(["check", "x.csv", "--profile", "CEC-1306A-S1"])
     assert args.strict is False
+    assert args.strict_ledger is False
+
+
+# ---------------------------------------------------------------------------
+# --strict-ledger
+#
+# A different question from --strict. --strict refuses a filing where a rule
+# was never applied; --strict-ledger refuses one where a rule was applied and
+# judged no rows, which the first cannot see because such a rule is listed,
+# correctly, as evaluated.
+# ---------------------------------------------------------------------------
+
+
+def test_strict_ledger_fails_a_file_where_a_rule_judged_no_rows() -> None:
+    """The 1308B fixture's NAICS codes are ordinary six digit codes.
+
+    QP023 reads the published residential classification table, so it ran over
+    the file and had nothing in its scope to judge. Nothing is wrong with the
+    filing and the flag refuses it anyway, which is what it is for.
+    """
+    args = ["check", str(FIXTURES / "1308b_s1_clean.csv"), "--profile", "CEC-1308B-S1"]
+
+    assert _run(*args).returncode == EXIT_OK
+    strict_ledger = _run(*args, "--strict-ledger")
+    assert strict_ledger.returncode == EXIT_FINDINGS
+    assert "QP023 on NAICSCode" in strict_ledger.stderr
+
+
+def test_strict_ledger_passes_a_file_where_every_rule_judged_something() -> None:
+    """Otherwise the flag would be a gate that always fires, and gates nothing."""
+    args = ["check", str(FIXTURES / "1306a_s1_clean.csv"), "--profile", "CEC-1306A-S1"]
+
+    result = _run(*args, "--strict-ledger")
+    assert result.returncode == EXIT_OK, result.stderr
+    assert result.stderr == ""
+
+
+def test_strict_ledger_leaves_the_report_untouched_and_speaks_on_stderr() -> None:
+    """stdout is the report. A caller piping JSON keeps getting JSON."""
+    args = ["check", str(FIXTURES / "1308b_s1_clean.csv"), "--profile", "CEC-1308B-S1"]
+
+    plain = _run(*args)
+    gated = _run(*args, "--strict-ledger")
+
+    assert plain.stdout == gated.stdout
+    assert plain.stderr == ""
+    assert gated.stderr != ""
+
+
+def test_strict_ledger_does_not_mask_a_usage_error() -> None:
+    result = _run(
+        "check", str(FIXTURES / "1306a_s1_clean.csv"), "--profile", "NOPE", "--strict-ledger"
+    )
+    assert result.returncode == EXIT_USAGE
+
+
+def test_strict_ledger_names_every_input_in_a_batch_not_just_the_first() -> None:
+    paths = [str(FIXTURES / "1308b_s1_clean.csv"), str(FIXTURES / "1308c_clean.csv")]
+    lenient = _run("check", *paths)
+    gated = _run("check", *paths, "--strict-ledger")
+
+    assert lenient.returncode == EXIT_OK, lenient.stderr
+    assert gated.returncode == EXIT_FINDINGS
+    assert "1308b_s1_clean.csv" in gated.stderr
+    assert "QP023 on NAICSCode" in gated.stderr
+
+
+def _check_args(paths: list[str], **overrides: object) -> argparse.Namespace:
+    fields: dict[str, object] = {
+        "profile": None,
+        "paths": paths,
+        "format": "text",
+        "strict": False,
+        "strict_ledger": False,
+    }
+    fields.update(overrides)
+    return argparse.Namespace(**fields)
+
+
+def test_strict_ledger_in_process_returns_the_same_verdicts_as_the_subprocess(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The same two cases again, run in process.
+
+    The subprocess tests above are the ones that measure what a shell sees, and
+    they are the reason this flag exists. They also run the code where coverage
+    cannot follow it, so the branch that turns a silent rule into exit 1 could be
+    deleted and only those tests would object. This reaches it directly.
+    """
+    quiet = _cmd_check(_check_args([str(FIXTURES / "1306a_s1_clean.csv")], strict_ledger=True))
+    assert quiet == EXIT_OK
+    assert capsys.readouterr().err == ""
+
+    gated = _cmd_check(_check_args([str(FIXTURES / "1308b_s1_clean.csv")], strict_ledger=True))
+    assert gated == EXIT_FINDINGS
+    assert "QP023 on NAICSCode" in capsys.readouterr().err
+
+
+def test_strict_ledger_in_process_gates_a_batch_too(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    paths = [str(FIXTURES / "1308c_clean.csv"), str(FIXTURES / "1308b_s1_clean.csv")]
+
+    assert _cmd_check(_check_args(paths)) == EXIT_OK
+    capsys.readouterr()
+    assert _cmd_check(_check_args(paths, strict_ledger=True)) == EXIT_FINDINGS
+    assert "1308b_s1_clean.csv" in capsys.readouterr().err
+
+
+def test_strict_ledger_is_documented_in_the_help_text() -> None:
+    help_text = " ".join(_run("check", "--help").stdout.split())
+    assert "--strict-ledger" in help_text
+    assert "judged no rows at all on a column this form carries" in help_text
 
 
 def test_strict_is_documented_in_the_help_text() -> None:
@@ -177,6 +290,12 @@ def test_strict_returns_zero_for_a_report_with_nothing_left_unevaluated(
     assert complete.status is Status.PASS
 
     monkeypatch.setattr("qfer_preflight.cli.validate_path", lambda *_: complete)
-    args = argparse.Namespace(profile="CEC-1306A-S1", paths=["x.csv"], format="text", strict=True)
+    args = argparse.Namespace(
+        profile="CEC-1306A-S1",
+        paths=["x.csv"],
+        format="text",
+        strict=True,
+        strict_ledger=False,
+    )
     assert _cmd_check(args) == EXIT_OK
     assert "PASS" in capsys.readouterr().out

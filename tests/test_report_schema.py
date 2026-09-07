@@ -111,3 +111,35 @@ def test_schema_file_declares_version_one() -> None:
     schema = json.loads(SCHEMA_V1.read_text(encoding="utf-8"))
     assert schema["properties"]["schema_version"] == {"const": 1}
     assert SCHEMA_V1.name == f"report-v{REPORT_SCHEMA_VERSION}.schema.json"
+
+
+def test_the_schema_file_states_its_minor_revision_as_a_literal() -> None:
+    """The minor number is not in the payload, so nothing derives it.
+
+    `schema_version` names the major version and a test above pins it. The minor
+    revision has only ever lived in this file, which means it is a constant a
+    property test cannot check: any assertion phrased as "the minor version is
+    whatever the file says" passes on every value including a forgotten one.
+    So the literal is written here, and moving it is a deliberate edit in two
+    places rather than a number that drifts in one.
+    """
+    schema = json.loads(SCHEMA_V1.read_text(encoding="utf-8"))
+    assert schema["minorVersion"] == 1
+    history = schema["minorVersionHistory"]
+    assert [entry.split(":")[0] for entry in history] == ["1.0", "1.1"]
+    assert "evaluation" in history[-1], (
+        "minor revision 1.1 is the one that added the evaluation ledger, and "
+        "the history entry has to name what it added or it records nothing"
+    )
+
+
+def test_the_evaluation_ledger_is_optional_in_the_schema() -> None:
+    """Additive, so a report written before it exists is still a version 1 report.
+
+    Requiring `evaluation` would move the major version, because it would
+    invalidate every document this schema already described. The engine emits it
+    on every path regardless, which `tests/test_evaluation_ledger.py` holds.
+    """
+    schema = json.loads(SCHEMA_V1.read_text(encoding="utf-8"))
+    assert "evaluation" in schema["properties"]
+    assert "evaluation" not in schema["required"]

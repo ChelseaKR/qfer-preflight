@@ -67,8 +67,9 @@ edit caused a change; it re-keys two reports and says which lines are the same
 lines.
 
 Exit codes: `0` no error-level findings, `1` at least one error-level finding
-(or, with `--strict`, anything left unevaluated or any advisory raised), `2`
-bad invocation.
+(or, with `--strict`, anything left unevaluated or any advisory raised, or,
+with `--strict-ledger`, any rule that judged no rows on a column this form
+carries), `2` bad invocation.
 
 The JSON report conforms to a published schema,
 `docs/schemas/report-v1.schema.json`, and carries its version as
@@ -157,6 +158,39 @@ with no findings and no advisories reads as a clean file, so no hostile input
 may produce one. `tests/test_advisory_channel.py` attacks the channel itself,
 on the assumption that an output with no citation behind it is where an
 invented check would try to enter.
+
+### The evaluation ledger, and the rule that judged nothing
+
+`Findings: none` is what a filer reads. The advisory channel above exists to
+stop that line standing for something the reader noticed and could not cite.
+The ledger exists to stop it standing for something no rule ever looked at.
+
+`rules_evaluated` lists identifiers. It is true and it is not enough: a rule can
+be listed there, correctly, having read every row in the file and reached a
+verdict on none of them. So every report also carries an `evaluation` array,
+one entry per rule and per column it touches, saying how many rows it was
+offered, how many it judged, how many its own published applicability does not
+reach, and how many an earlier rule left unreadable, with that rule named.
+
+The numbers add up, and the type refuses an entry where they do not. A rule that
+judged nothing carries a `zero_reason` of `no_applicable_rows`, `blocked_by` or
+`column_absent`, and never carries one when it judged something, because a bare
+`0` beside a rule identifier reads exactly like a clean result. `evaluated`
+separates "ran and judged nothing" from "never ran".
+
+It is a measurement of the run, not a check. It has no severity, cites nothing,
+raises no finding and moves no verdict. `--strict-ledger` turns it into a gate
+for callers who want one: exit non-zero when any rule judged no rows on a column
+this form carries. A clean filing can fail that, and is meant to. On
+`CEC-1308B-S1`, a file whose NAICS codes are all ordinary six-digit codes leaves
+QP023, which reads the published residential classification table, with nothing
+in its scope to judge. The ledger says so in as many words instead of reporting
+a rule that ran and found no problems.
+
+`docs/column-coverage.md` describes the entry shape and the two deliberate
+asymmetries in it; `tests/test_evaluation_ledger.py` derives the ledger's rule
+to column map from that document, so a rule the registry runs and the ledger
+never counts fails the suite.
 
 ### Large files, and what a report will not do to fit
 
