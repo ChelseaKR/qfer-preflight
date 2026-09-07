@@ -1,0 +1,32 @@
+# The hook manifest consumers read when they list this repository under
+# `repos:` in their own .pre-commit-config.yaml. It is not the configuration
+# this repository runs on itself, which is .pre-commit-config.yaml.
+#
+# `language: python` builds an isolated environment from pyproject.toml and
+# installs the `qfer-preflight` console script declared under
+# [project.scripts]. The validator has no runtime dependencies, so that
+# environment holds the tool and nothing else.
+#
+# `pass_filenames` is left at its default of true, so pre-commit appends the
+# staged CSV paths to the entry. One staged file takes the single report path
+# through the CLI, several take the batch path, and both carry the same exit
+# code contract: 1 for error level findings, 2 for an input the tool could not
+# process, which includes a header matching no published template.
+#
+# `--strict` is not a default here. It widens exit 1 to cover every
+# unevaluated rule, and since at least three rules are unevaluated on every
+# form, a strict hook refuses every commit until the filer has decided that is
+# what they want. The filer guide shows how to turn it on with `args`.
+#
+# The environment pre-commit builds runs on the Python that pre-commit itself
+# runs on, and this package declares `requires-python = ">=3.12"`. On an older
+# interpreter the environment fails to build, loudly, rather than the hook
+# quietly not running.
+- id: qfer-preflight
+  name: qfer-preflight (CEC QFER CSV filings)
+  description: >-
+    Validate staged CEC QFER Consumption CSV filings against published
+    Commission rules, offline, before they are committed.
+  entry: qfer-preflight check
+  language: python
+  types: [csv]

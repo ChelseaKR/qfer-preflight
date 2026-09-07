@@ -420,6 +420,169 @@ reason, rather than being skipped.
 conforming to `docs/schemas/report-batch-v1.schema.json`. `--format sarif` is
 available for CI surfaces that read it.
 
+## Running it in CI
+
+If your quarterly CSVs live in version control, the same run this guide has
+been describing can happen on every push, or before every commit. Two surfaces
+are published for that, and both carry the exit code contract above unchanged.
+
+Nothing about your filing leaves the machine it runs on. The GitHub Action
+downloads nothing and consults no package index: a composite action is checked
+out at the reference you pin, the validator has no runtime dependencies, and
+the action runs that checkout directly. The single exception is the optional
+SARIF upload, which sends the report to your own repository's code scanning
+alerts and nowhere else.
+
+### A GitHub Action
+
+```yaml
+name: Validate the quarter
+
+on:
+  pull_request:
+    paths: ["filings/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  qfer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ChelseaKR/qfer-preflight@0000000000000000000000000000000000000000
+        with:
+          paths: filings/
+```
+
+Replace those forty zeroes with a real commit of this repository. Pinning is
+covered below, and it is worth reading before you copy this.
+
+| Input | Default | What it does |
+|-------|---------|--------------|
+| `paths` | required | What to validate, **one path per line**. Each line is a CSV file, or a directory whose files are validated in name order. One per line rather than a space separated list, so a path containing a space is not silently split into two paths that do not exist. |
+| `profile` | detected | A form profile such as `CEC-1306A-S1`. Left empty, each file's header is matched against the published templates and only an exact match is accepted, so a folder holding five different forms needs no configuration. |
+| `strict` | `"false"` | `"true"` adds `--strict`. Read the section above first: under strict, every form fails, because every form leaves rules unevaluated. |
+| `format` | `"text"` | `text`, `json` or `sarif`. This is the report written to the log and to the report file. |
+| `upload-sarif` | `"false"` | `"true"` sends the report to your repository's code scanning alerts. |
+
+Two outputs are available to later steps: `exit-code`, the validator's own
+code as a string, and `report-path`, the file the report was written to.
+
+**The job status is the exit code.** Exit `0` is a green job. Exit `1`, error
+level findings, and exit `2`, an invocation the tool could not carry out, are
+both red. Nothing in the action can turn a non-zero code into a passing job.
+
+That last point is the reason to run this in CI rather than trusting a green
+check. Point the action at a directory with no files in it and the job fails,
+because exit `2` means the run produced no verdict at all. A filing nothing
+evaluated must never leave a green check behind. The same holds for a CSV
+whose header matches no published template: the run refuses it rather than
+guessing a profile, and the refusal reaches the job status.
+
+### SARIF, and where the annotations land
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  qfer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ChelseaKR/qfer-preflight@0000000000000000000000000000000000000000
+        with:
+          paths: filings/
+          format: sarif
+          upload-sarif: "true"
+```
+
+The upload happens whatever the verdict, because a filing with error level
+findings is exactly the one whose annotations are worth having. The
+unevaluated rules travel with it as SARIF notifications, so the annotation
+view is not quieter than the report.
+
+Asking for the upload without `format: sarif` is refused, and the job stops
+before anything is validated. It is not skipped. A skipped upload would leave
+an empty code scanning view beside a green job, and an empty view reads like a
+clean filing.
+
+One limitation to know before you turn this on. The report names each input by
+its base name, and code scanning maps an alert to a file by its path relative
+to the repository root. Alerts therefore land on the right lines only when the
+filing sits at the root of the repository. From a subdirectory they still
+arrive, and they still carry the rule, the message and the row, but they will
+not attach to the file in the diff view.
+
+### Pinning, and what the action can and cannot prove
+
+Pin to a commit SHA. It is the strongest reference GitHub offers, and it is
+the one form that cannot change under you.
+
+A tag works too, from the first release that carries `action.yml`. It is not
+in `v0.2.0`, which was published before this action existed, so check the
+release notes rather than assuming any tag will do.
+
+What the action cannot do is verify the signature on its own tag. Release tags
+here are signed, and `.github/workflows/release.yml` verifies them at
+publication time against the key committed at `.github/allowed_signers`. That
+check needs a clone with full history and the tag objects in it. An action
+checkout has neither, so there is nothing for the action to verify against and
+it does not pretend otherwise. To check a signature yourself before pinning:
+
+```sh
+git clone https://github.com/ChelseaKR/qfer-preflight
+cd qfer-preflight
+git config gpg.ssh.allowedSignersFile .github/allowed_signers
+git verify-tag v0.2.0
+git rev-parse v0.2.0^{commit}
+```
+
+The last line prints the commit that tag names, which is what you pin.
+
+The runner needs Python 3.12 or newer, which `ubuntu-latest` has. On an image
+that does not, add `actions/setup-python` before the step. The action checks
+the version and says so rather than failing later on an import.
+
+### A pre-commit hook
+
+```yaml
+repos:
+  - repo: https://github.com/ChelseaKR/qfer-preflight
+    rev: v0.2.0
+    hooks:
+      - id: qfer-preflight
+```
+
+The `rev` has to be a revision carrying `.pre-commit-hooks.yaml`, which
+`v0.2.0` does not. `pre-commit autoupdate` will move it to the newest tag,
+which is the simplest way to get a current one.
+
+The hook runs `qfer-preflight check` over the staged CSV files and nothing
+else. It refuses a staged CSV whose header matches no published template,
+because that is exit `2` and a run that could not identify the form validated
+nothing. It refuses a filing with error level findings, because that is exit
+`1`.
+
+`--strict` is not on by default, and turning it on refuses every commit, since
+every form leaves at least three rules unevaluated. If that is what you want,
+say so explicitly:
+
+```yaml
+repos:
+  - repo: https://github.com/ChelseaKR/qfer-preflight
+    rev: v0.2.0
+    hooks:
+      - id: qfer-preflight
+        args: [--strict]
+```
+
+The hook environment is built on the Python that runs `pre-commit`, and this
+package requires 3.12 or newer. On an older interpreter the environment fails
+to build, loudly, rather than the hook quietly not running.
+
 ## If you think a finding is wrong
 
 Say so, with the document. A value this tool reports as an error that a

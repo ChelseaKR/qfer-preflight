@@ -1,0 +1,269 @@
+name: "qfer-preflight"
+description: >-
+  Validate California Energy Commission QFER Consumption CSV filings offline,
+  and fail the job under the same exit code rules as the command line.
+author: "Chelsea Kelly-Reif"
+
+branding:
+  icon: "check-circle"
+  color: "blue"
+
+# What this action runs, and why it runs it that way.
+#
+# A composite action is checked out at the ref the caller pins, so
+# `github.action_path` already holds exactly the bytes that ref names. The
+# validator has an empty runtime dependency set on purpose (see the comment
+# above `dependencies` in pyproject.toml), so those bytes are the whole
+# program: this action puts `src` on PYTHONPATH and runs `python -m
+# qfer_preflight`. Nothing is downloaded, nothing is built, and no index is
+# consulted, so the run makes no network call at all unless `upload-sarif` is
+# asked for, and that one call goes to the caller's own repository.
+#
+# Installing from a package index instead would mean trusting the index to be
+# serving what the tag says, on top of trusting the tag. Running the checkout
+# removes that step rather than verifying it.
+#
+# What this action cannot do is verify the signature on its own tag.
+# `.github/workflows/release.yml` verifies a release tag against
+# `.github/allowed_signers` at publish time, using a clone with full history;
+# an action checkout has no history and no tag objects, so there is nothing
+# here to verify against. A caller who wants the strongest pin GitHub offers
+# should pin this action to a commit SHA, and a caller who wants the signature
+# checked should run `git verify-tag` against a clone before pinning. The
+# filer guide says so in the same words.
+
+inputs:
+  paths:
+    description: >-
+      What to validate, one path per line. A path may be a CSV file or a
+      directory, whose files are validated in name order. One path per line
+      rather than a space separated list, so a path containing a space is not
+      silently split into two paths that do not exist.
+    required: true
+  profile:
+    description: >-
+      Form profile, for example CEC-1306A-S1. Left empty, the profile is
+      detected from each file's header row and only an exact match against one
+      published template is accepted.
+    required: false
+    default: ""
+  strict:
+    description: >-
+      "true" to also fail when any rule could not be evaluated or the reader
+      raised an advisory. This is the `--strict` flag.
+    required: false
+    default: "false"
+  format:
+    description: >-
+      Report format written to the report file and echoed into the job log:
+      text, json or sarif.
+    required: false
+    default: "text"
+  upload-sarif:
+    description: >-
+      "true" to upload the report to the calling repository's code scanning
+      alerts. Requires `format: sarif` and a job granting
+      `security-events: write`. Asking for the upload with any other format is
+      refused rather than skipped, because a skipped upload leaves the
+      code scanning view empty, and an empty view reads like a clean filing.
+    required: false
+    default: "false"
+
+outputs:
+  exit-code:
+    description: >-
+      The validator's exit code as a string: "0" no error level findings, "1"
+      at least one error level finding (or, under strict, anything left
+      unaccounted for), "2" the tool was asked for something it could not do
+      and produced no verdict.
+    value: ${{ steps.run.outputs.exit-code }}
+  report-path:
+    description: >-
+      Absolute path to the report file this run wrote, in the requested
+      format.
+    value: ${{ steps.run.outputs.report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    # Every refusal below happens before the validator runs, so a
+    # misconfigured job stops with a sentence about the configuration rather
+    # than reporting on a filing it was never going to check properly.
+    - name: Refuse a configuration that could not report what it found
+      shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        PROFILE: ${{ inputs.profile }}
+        STRICT: ${{ inputs.strict }}
+        FORMAT: ${{ inputs.format }}
+        UPLOAD_SARIF: ${{ inputs.upload-sarif }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        case "${STRICT}" in
+          true|false) ;;
+          *) echo "strict must be \"true\" or \"false\", got \"${STRICT}\"" >&2; exit 1 ;;
+        esac
+
+        case "${UPLOAD_SARIF}" in
+          true|false) ;;
+          *) echo "upload-sarif must be \"true\" or \"false\", got \"${UPLOAD_SARIF}\"" >&2; exit 1 ;;
+        esac
+
+        case "${FORMAT}" in
+          text|json|sarif) ;;
+          *) echo "format must be text, json or sarif, got \"${FORMAT}\"" >&2; exit 1 ;;
+        esac
+
+        # A SARIF upload asked for alongside a text report would produce a
+        # green job, an empty code scanning view, and no sign that the two are
+        # unrelated. Refuse the combination instead of quietly dropping half
+        # of it.
+        if [ "${UPLOAD_SARIF}" = "true" ] && [ "${FORMAT}" != "sarif" ]; then
+          echo "upload-sarif is true but format is \"${FORMAT}\"." >&2
+          echo "Code scanning reads SARIF only. Set format: sarif, or set upload-sarif: false." >&2
+          exit 1
+        fi
+
+        # An empty paths input reaching the validator would be an argparse
+        # usage error, which is a failure, but one whose message says nothing
+        # about the job that produced it.
+        if ! printf '%s' "${PATHS}" | grep -q '[^[:space:]]'; then
+          echo "paths is empty, so this run would validate nothing." >&2
+          echo "Give at least one CSV file or directory, one per line." >&2
+          exit 1
+        fi
+
+        # The action runs the checkout it was resolved from. If that tree is
+        # not there, running some other copy of the tool from the runner's
+        # PATH would report on the filing under a version nobody pinned.
+        test -f "${ACTION_PATH}/src/qfer_preflight/cli.py"
+
+        # The floor is written here as a literal rather than read out of
+        # pyproject.toml, because parsing pyproject would need the very Python
+        # whose version is in question. tests/test_ci_action.py holds the
+        # literal against `requires-python` so the two cannot drift.
+        #
+        # Python raises the message itself, so there is no shell branch here
+        # that could swallow the result. A runner with no python3 at all fails
+        # this step on the command's own exit status.
+        python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else f"qfer-preflight needs Python 3.12 or newer, and python3 here is {sys.version.split()[0]}. Add actions/setup-python before this step.")'
+
+        echo "profile: ${PROFILE:-detected from each header}"
+
+    - name: Validate the filings
+      id: run
+      shell: bash
+      env:
+        PATHS: ${{ inputs.paths }}
+        PROFILE: ${{ inputs.profile }}
+        STRICT: ${{ inputs.strict }}
+        FORMAT: ${{ inputs.format }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+
+        # One path per line. A whitespace only line is dropped; every other
+        # line is passed through exactly as written, spaces included.
+        declare -a targets=()
+        while IFS= read -r line; do
+          case "${line}" in
+            *[![:space:]]*) targets+=("${line}") ;;
+          esac
+        done <<< "${PATHS}"
+        test "${#targets[@]}" -gt 0
+
+        declare -a options=(check)
+        if [ -n "${PROFILE}" ]; then
+          options+=(--profile "${PROFILE}")
+        fi
+        if [ "${STRICT}" = "true" ]; then
+          options+=(--strict)
+        fi
+        options+=(--format "${FORMAT}")
+
+        case "${FORMAT}" in
+          sarif) extension="sarif" ;;
+          json) extension="json" ;;
+          *) extension="txt" ;;
+        esac
+        report="${RUNNER_TEMP}/qfer-preflight-report.${extension}"
+
+        echo "running: python -m qfer_preflight ${options[*]} ${targets[*]}"
+
+        # `set +e` around the one command whose non-zero exit is the answer,
+        # not an error. It is deliberately not `|| true` and this step is
+        # deliberately not `continue-on-error`: both of those discard the code
+        # instead of recording it, and the code is the whole verdict. The
+        # final step of this action turns what is recorded here back into the
+        # job's status, and treats a missing record as a failure.
+        set +e
+        PYTHONPATH="${ACTION_PATH}/src" python3 -m qfer_preflight "${options[@]}" "${targets[@]}" \
+          > "${report}"
+        status=$?
+        set -e
+
+        echo "exit-code=${status}" >> "${GITHUB_OUTPUT}"
+        echo "report-path=${report}" >> "${GITHUB_OUTPUT}"
+
+        # The report goes into the log whatever the outcome. A run that ended
+        # at exit 2 wrote nothing to the report file and said why on stderr,
+        # which is already in the log above this line.
+        if [ -s "${report}" ]; then
+          echo "::group::qfer-preflight report (${FORMAT})"
+          cat "${report}"
+          echo "::endgroup::"
+        else
+          echo "the run wrote no report, so nothing was validated"
+        fi
+
+    # Uploading is not conditional on the verdict. A filing with error level
+    # findings is exactly the one whose annotations are worth having, and the
+    # not evaluated rules ride along as SARIF notifications so the annotation
+    # view is not quieter than the report.
+    #
+    # Known limitation, stated here because a reader will meet it: the
+    # validator names each input by its base name under its own `INPUT` URI
+    # base, not by a path relative to the repository root. Code scanning maps
+    # an alert to a file by repository relative path, so alerts land on the
+    # right lines only when the filing sits at the root of the repository.
+    # Fixing that means changing what the CLI writes, which is out of scope
+    # for this action.
+    - name: Upload the SARIF report to code scanning
+      if: ${{ inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+      with:
+        sarif_file: ${{ steps.run.outputs.report-path }}
+        category: qfer-preflight
+
+    # The last word on the job's status, and the only step that decides it.
+    #
+    # `always()` so that a failed upload does not take the verdict with it:
+    # the reason the job failed should be the filing when the filing is the
+    # problem. A step that failed earlier still fails the job on its own, so
+    # this can only ever add a failure, never remove one.
+    - name: Fail the job unless the filing came back clean
+      if: ${{ always() }}
+      shell: bash
+      env:
+        STATUS: ${{ steps.run.outputs.exit-code }}
+      run: |
+        set -euo pipefail
+
+        # No recorded code means the validator did not reach the point of
+        # having one. That is the case this whole action exists to refuse:
+        # a filing nothing evaluated must never leave a green job behind.
+        case "${STATUS}" in
+          "" ) echo "the validator recorded no exit code, so nothing was validated" >&2; exit 1 ;;
+          *[!0-9]*) echo "recorded exit code \"${STATUS}\" is not a number" >&2; exit 1 ;;
+        esac
+
+        case "${STATUS}" in
+          0) echo "no error level findings" ;;
+          1) echo "the filing has error level findings, or strict mode found something unaccounted for" >&2 ;;
+          2) echo "the tool was asked for something it could not do, so this run produced no verdict" >&2 ;;
+          *) echo "unrecognised exit code ${STATUS}" >&2 ;;
+        esac
+
+        exit "${STATUS}"
