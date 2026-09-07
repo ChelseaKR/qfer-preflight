@@ -60,7 +60,11 @@ jobs:
         run: uv sync --locked
 
       - name: The watcher's own tests
-        run: uv run pytest tests/test_watch_sources.py -q
+        # `--no-cov` because the coverage floor is measured over the WHOLE package by
+        # `make verify` in ci.yml. Running one file under that floor fails at 16%
+        # coverage while every test in it passes -- a red job that says nothing about
+        # the watcher, which is exactly how a job gets ignored.
+        run: uv run pytest tests/test_watch_sources.py -q --no-cov
 
       - name: Dry run, which must make no network call and claim nothing
         # `shell: bash` because the default `run:` is `bash -e {0}` WITHOUT pipefail,
