@@ -14,6 +14,30 @@ Nothing here is fetched at validation time; the hashes are dev-time snapshots
 of documents that live on the Commission's site, recorded so drift is visible,
 not so behaviour can depend on them.
 
+## The watcher
+
+`scripts/watch_sources.py` runs the re-download half of the procedure below, and
+`.github/workflows/source-watch.yml` runs it on the 8th of February, May, August
+and November, a week before each filing deadline.
+
+```sh
+uv run python scripts/watch_sources.py            # re-fetch and compare
+uv run python scripts/watch_sources.py --dry-run  # parse only, no network
+uv run python scripts/watch_sources.py --json     # machine-readable summary
+```
+
+It reports four outcomes and keeps them apart deliberately: `unchanged`,
+`drifted`, `error` (**we could not look** -- a 404, a timeout, a refused
+connection) and `not-checked` (`--dry-run`, where no request was made at all).
+`error` is not `unchanged`, and a run that could not fetch a document exits 2
+rather than reporting no drift. A watcher that said "no drift" because the
+Commission's web server was down would be a green light nobody had earned.
+
+On drift the workflow opens a pull request carrying both digests and the rule
+identifiers whose citations point into the changed document. **It updates
+nothing.** The pull request is a review request, and the procedure below is what
+answers it.
+
 ## What to do when a hash stops matching
 
 1. Stop. Do not patch the hash first. A changed hash means the published text
