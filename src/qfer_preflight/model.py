@@ -477,6 +477,31 @@ class Report:
     # column. See `LedgerEntry`.
     evaluation: list[LedgerEntry] = field(default_factory=list)
 
+    def to_json(self) -> str:
+        """This report as the published JSON, identical to the CLI's.
+
+        `report`, `detect` and `api` all import `model`, so the rendering
+        functions cannot be imported at module scope without a cycle. Importing
+        inside the method is the cycle break, and it keeps the rendering in one
+        place rather than giving the API its own copy that could drift from
+        what `qfer-preflight check --format json` prints.
+        """
+        from .report import to_json
+
+        return to_json(self)
+
+    def to_text(self) -> str:
+        """This report as the human-readable rendering, identical to the CLI's."""
+        from .report import to_text
+
+        return to_text(self)
+
+    def to_sarif(self) -> str:
+        """This report as SARIF 2.1.0, identical to the CLI's."""
+        from .report import report_to_sarif
+
+        return report_to_sarif(self)
+
     def checked_findings(self) -> list[Finding]:
         """The finding list, refusing anything that is not a `Finding`.
 

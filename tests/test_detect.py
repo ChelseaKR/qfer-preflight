@@ -19,14 +19,18 @@ from pathlib import Path
 
 import pytest
 
-from qfer_preflight import cli
+from qfer_preflight import detect
 from qfer_preflight.cli import (
     EXIT_FINDINGS,
     EXIT_OK,
     EXIT_USAGE,
-    _read_header_bytes,
     main,
 )
+
+# The header scan moved to `detect` so the published Python API and the
+# command line share one implementation. These tests follow it there; the
+# behaviour they assert is unchanged.
+from qfer_preflight.detect import read_header_bytes as _read_header_bytes
 from qfer_preflight.profiles import (
     PROFILES,
     Profile,
@@ -272,5 +276,5 @@ def test_the_record_scan_agrees_with_csv_across_chunk_boundaries(
     baseline = _read_header_bytes(_write(tmp_path, "baseline.csv", payload))
     path = _write(tmp_path, "chunked.csv", payload)
     for chunk in range(1, len(payload) + 2):
-        monkeypatch.setattr(cli, "_HEADER_CHUNK_BYTES", chunk)
+        monkeypatch.setattr(detect, "HEADER_CHUNK_BYTES", chunk)
         assert _read_header_bytes(path) == baseline, chunk

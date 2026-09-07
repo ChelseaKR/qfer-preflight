@@ -75,6 +75,29 @@ breaking change and is recorded here.
 - `tests/test_evaluation_ledger.py` derives the ledger's rule to column map from
   `docs/column-coverage.md`, in both directions, so a rule the registry runs and
   the ledger never counts fails the suite rather than reporting zero forever.
+- A supported Python API. `qfer_preflight.validate(path_or_bytes,
+  profile=None)` returns a `Report`; `detect_profile`, `profiles` and `rules`
+  expose detection and the registry; `Report` gains `to_json`, `to_text` and
+  `to_sarif`, which produce byte-identical output to the matching
+  `check --format`, because they call the same renderers rather than a second
+  copy. `__all__` is the supported surface and the README states the SemVer
+  policy for it, matching the report schema's: additive is minor, removal or
+  retyping is major. Until now a Python consumer imported `engine`, which is
+  private and free to move.
+
+  Three properties are asserted rather than intended, in
+  `tests/test_public_api.py`. Fail-closed travels with the API: a filing that
+  could not be read comes back as a `Report` whose verdict is not `pass`,
+  rather than as an exception a caller has to interpret. Detection refuses
+  instead of guessing, raising `ProfileDetectionError` with the near misses
+  named, and a test forbids the near misses ever becoming a fallback.
+  Importing the package opens no data file and imports no argument parser,
+  checked with an audit hook in a fresh interpreter.
+
+  The header scan and profile detection moved out of `cli.py` into
+  `detect.py`, and the unbound rule listing into `rules.all_rules`, so the
+  command line and the API run one implementation instead of two that agree
+  today. No CLI behaviour or output changes.
 
 - `qfer-preflight explain <RULE_OR_ADV_CODE>`, with `--profile`, `--value` and
   `--format json`. A finding names the rule and the offending value; until now the

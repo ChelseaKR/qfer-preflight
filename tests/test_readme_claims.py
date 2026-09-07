@@ -233,3 +233,56 @@ def test_no_rule_is_listed_in_both_tables() -> None:
     leaves behind, and the reader sees a contradiction rather than a gap."""
     both = sorted(_ids_in_table(IMPLEMENTED_TABLE_INTRO) & _ids_in_table(UNEVALUATED_TABLE_INTRO))
     assert not both, f"the README lists {both} as both implemented and unevaluated"
+
+
+# --- The Python example in "Using it from Python" -------------------------
+#
+# The README shows a worked example whose every `print` carries the value it
+# produces as a trailing comment. Those comments are a claim about the
+# library, in the same class as the counts above, and they rot the same way: a
+# status that stops being `unvalidated` or a rule that stops being
+# unevaluated changes the output and nothing in the prose notices.
+#
+# So the block is executed rather than read. The one substitution is the input
+# path -- the README says `filing.csv`, which is the name a filer would use and
+# is deliberately not a file in this repository -- and it is replaced with the
+# fixture the annotated numbers were taken from. Everything else runs as
+# printed, including the imports.
+
+PYTHON_EXAMPLE_HEADING = "## Using it from Python"
+_EXAMPLE_FIXTURE = "tests/fixtures/1306b_clean.csv"
+_ANNOTATED = re.compile(r"^print\((?P<expr>.+?)\)\s*#\s*(?P<expected>.+?)\s*$")
+
+
+def _python_example() -> str:
+    """The first fenced Python block under the README's API heading."""
+    body = README.read_text(encoding="utf-8").split(PYTHON_EXAMPLE_HEADING, 1)
+    assert len(body) == 2, f"the README no longer has a {PYTHON_EXAMPLE_HEADING!r} section"
+    blocks = re.findall(r"```python\n(.*?)```", body[1], re.DOTALL)
+    assert blocks, "the API section no longer shows a Python example"
+    return str(blocks[0])
+
+
+def test_the_readme_python_example_runs_and_prints_what_it_claims() -> None:
+    source = _python_example().replace('"filing.csv"', f'"{_EXAMPLE_FIXTURE}"')
+    assert _EXAMPLE_FIXTURE in source, "the example's input path was not substituted"
+
+    namespace: dict[str, Any] = {}
+    checked = 0
+    for line in source.splitlines():
+        stripped = line.strip()
+        annotated = _ANNOTATED.match(stripped)
+        if annotated is None:
+            exec(compile(stripped, "<readme>", "exec"), namespace)
+            continue
+        value = eval(annotated["expr"], namespace)
+        expected = annotated["expected"]
+        # A comment that describes the output rather than stating it is prose,
+        # not a claim, and is left alone.
+        if expected.startswith("the "):
+            continue
+        assert str(value) == expected, (
+            f"the README says `{annotated['expr']}` prints {expected!r}; it printed {str(value)!r}"
+        )
+        checked += 1
+    assert checked >= 3, f"only {checked} annotated values in the example; expected at least 3"
