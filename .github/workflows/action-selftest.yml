@@ -1,0 +1,299 @@
+name: Action self test
+
+# The composite action published from this repository, run against this
+# repository's own fixtures.
+#
+# The action's whole job is to turn the validator's exit code into a job
+# status, so the only way to test it is to let it decide a job status and then
+# look at what it decided. Six of the eight cases below are meant to fail, and
+# a workflow that is permanently red teaches nobody anything, so each case runs
+# the action under `continue-on-error` and a following step compares the
+# recorded outcome against the outcome the case expects. The failure is not
+# swallowed: it is the measurement, and a case that comes back with any other
+# outcome, including none, fails the job. `continue-on-error` appears here and
+# nowhere in `action.yml`; `tests/test_ci_action.py` holds it that way, and
+# holds every `continue-on-error` step here to having an assertion after it.
+#
+# The exit code the action reports is echoed rather than asserted. Composite
+# action outputs after a failing step are not something this workflow can
+# guarantee, and an assertion that may silently have nothing to compare is not
+# an assertion. Exit code parity is measured where it can be measured
+# honestly, in `tests/test_ci_action.py`, which runs the CLI over these same
+# fixtures and holds the `expect-exit` values in the matrix below against what
+# it gets.
+#
+# Out of scope for `tests/test_gate_parity.py` on purpose, alongside
+# release.yml: the steps here exercise a published surface rather than gating
+# the working tree, and there is no make target a contributor would run to
+# reproduce a GitHub Actions job.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Same reasoning as ci.yml: a push to the default branch gets a group of its
+# own, so no commit reaches main with its only verdict cancelled or evicted.
+concurrency:
+  group: action-selftest-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  run-the-action:
+    name: ${{ matrix.case }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: a clean filing passes
+            paths: tests/fixtures/1306a_s1_clean.csv
+            profile: ""
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: success
+            expect-exit: "0"
+
+          - case: a filing with error level findings fails
+            paths: tests/fixtures/1306a_s1_dirty.csv
+            profile: ""
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "1"
+
+          - case: an empty directory fails rather than passing
+            paths: selftest-empty
+            profile: ""
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "2"
+
+          - case: a header matching no published template fails
+            paths: tests/fixtures/wrong_header.csv
+            profile: ""
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "2"
+
+          - case: a clean filing under strict fails on the unevaluated rules
+            paths: tests/fixtures/1306a_s1_clean.csv
+            profile: ""
+            strict: "true"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "1"
+
+          - case: a directory of filings takes the batch exit code
+            paths: tests/fixtures
+            profile: ""
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "1"
+
+          - case: sarif output on a clean filing passes
+            paths: tests/fixtures/1306a_s1_clean.csv
+            profile: ""
+            strict: "false"
+            format: sarif
+            upload-sarif: "false"
+            expect-outcome: success
+            expect-exit: "0"
+
+          - case: an explicit profile that does not exist fails
+            paths: tests/fixtures/1306a_s1_clean.csv
+            profile: CEC-9999
+            strict: "false"
+            format: text
+            upload-sarif: "false"
+            expect-outcome: failure
+            expect-exit: "2"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Create the empty directory case
+        # Git cannot track an empty directory, so the one case that needs one
+        # makes it here. It is created for every case, so the case that uses
+        # it is not the only one that would notice this step breaking.
+        run: mkdir -p selftest-empty
+        shell: bash
+
+      - name: Run the action
+        id: subject
+        # Present so the assertion below has something to read. See the
+        # header of this file: the failure is the measurement, and the next
+        # step fails the job on any outcome other than the expected one.
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: ${{ matrix.paths }}
+          profile: ${{ matrix.profile }}
+          strict: ${{ matrix.strict }}
+          format: ${{ matrix.format }}
+          upload-sarif: ${{ matrix.upload-sarif }}
+
+      - name: The outcome must be the one this case expects
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.subject.outcome }}
+          EXPECTED: ${{ matrix.expect-outcome }}
+          REPORTED_EXIT: ${{ steps.subject.outputs.exit-code }}
+          EXPECTED_EXIT: ${{ matrix.expect-exit }}
+          CASE: ${{ matrix.case }}
+        run: |
+          set -euo pipefail
+
+          echo "case            : ${CASE}"
+          echo "outcome         : ${OUTCOME:-<none>}"
+          echo "expected outcome: ${EXPECTED}"
+          echo "reported exit   : ${REPORTED_EXIT:-<none>} (expected ${EXPECTED_EXIT:-<none>}; asserted in tests/test_ci_action.py)"
+
+          # An empty outcome is not a pass. It means the step did not run, or
+          # ran and reported nothing, and either way this case measured
+          # nothing at all.
+          if [ -z "${OUTCOME}" ]; then
+            echo "the action step recorded no outcome, so this case measured nothing" >&2
+            exit 1
+          fi
+
+          if [ "${OUTCOME}" != "${EXPECTED}" ]; then
+            echo "expected the action to ${EXPECTED}, and it reported ${OUTCOME}" >&2
+            exit 1
+          fi
+
+          echo "ok"
+
+  refuse-a-configuration-that-could-not-report:
+    name: ${{ matrix.case }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: asking to upload SARIF without producing SARIF is refused
+            paths: tests/fixtures/1306a_s1_clean.csv
+            format: text
+            upload-sarif: "true"
+
+          - case: an empty paths input is refused
+            paths: ""
+            format: text
+            upload-sarif: "false"
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the action
+        id: subject
+        # As above: every case in this job is meant to fail, and the step
+        # after it fails the job if one of them does not.
+        continue-on-error: true
+        uses: ./
+        with:
+          paths: ${{ matrix.paths }}
+          format: ${{ matrix.format }}
+          upload-sarif: ${{ matrix.upload-sarif }}
+
+      - name: The action must have refused before validating anything
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.subject.outcome }}
+          CASE: ${{ matrix.case }}
+        run: |
+          set -euo pipefail
+
+          echo "case   : ${CASE}"
+          echo "outcome: ${OUTCOME:-<none>}"
+
+          if [ "${OUTCOME}" != "failure" ]; then
+            echo "expected the action to refuse this configuration, and it reported ${OUTCOME:-<none>}" >&2
+            exit 1
+          fi
+
+          echo "ok"
+
+  pre-commit-hook:
+    name: The pre-commit hook refuses what the CLI refuses
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Pin the Python version
+        run: uv python install 3.12
+
+      - name: Run the published hook over the fixtures
+        # `pre-commit try-repo` builds the hook environment from
+        # .pre-commit-hooks.yaml in this checkout and runs it, which is the
+        # same path a filer's `repos:` entry takes. Every invocation's exit
+        # status is captured and compared, so a hook that stopped running at
+        # all would read as a failure rather than as three quiet passes.
+        #
+        # pre-commit is pinned and fetched here rather than added to the dev
+        # dependency group, the same shape as the pinned gitleaks download in
+        # security.yml: it is a tool CI runs, not something the package or its
+        # tests import.
+        shell: bash
+        env:
+          PRE_COMMIT_VERSION: "4.6.2"
+        run: |
+          set -euo pipefail
+
+          try() {
+            local expected="$1"
+            local label="$2"
+            shift 2
+            set +e
+            uvx "pre-commit@${PRE_COMMIT_VERSION}" try-repo . qfer-preflight --files "$@"
+            local status=$?
+            set -e
+            echo "${label}: exit ${status}, expected ${expected}"
+            if [ "${status}" != "${expected}" ]; then
+              echo "the hook exited ${status} on ${label}, expected ${expected}" >&2
+              return 1
+            fi
+          }
+
+          # pre-commit reports its own 1 for a failing hook whatever the
+          # hook's exit code was, so what is asserted here is refused or not
+          # refused. Which exit code the CLI produced for each of these is
+          # asserted in tests/test_ci_action.py.
+          try 0 "a clean filing" tests/fixtures/1306a_s1_clean.csv
+          try 1 "a filing with error level findings" tests/fixtures/1306a_s1_dirty.csv
+          try 1 "a header matching no published template" tests/fixtures/wrong_header.csv

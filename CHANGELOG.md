@@ -125,6 +125,37 @@ breaking change and is recorded here.
   the two outcomes, a plain misreading defect or a documented disagreement
   reported at warning severity, and repeats that correspondence never moves a
   severity.
+- Two CI surfaces, so a filer who keeps quarterly CSVs in version control runs
+  the same offline check on every push. `action.yml` is a composite GitHub
+  Action taking `paths`, `profile`, `strict`, `format` and `upload-sarif`, and
+  reporting `exit-code` and `report-path`. `.pre-commit-hooks.yaml` publishes a
+  `qfer-preflight` hook that runs `qfer-preflight check` over staged CSV files.
+  Both keep the exit code contract unchanged, and both detect the profile from
+  each header, so a folder holding five forms configures nothing.
+- The action installs nothing and consults no package index. A composite action
+  is checked out at the reference the caller pins and the validator has no
+  runtime dependencies, so the action puts that checkout's `src` on PYTHONPATH
+  and runs it: the bytes that run are the bytes the pinned reference names, with
+  no index in between to trust. `tests/test_ci_action.py` holds the empty
+  runtime dependency set that makes this legal, and holds the action's Python
+  floor against `requires-python`.
+- Nothing in the action can turn a failed validation into a green job. There is
+  no `continue-on-error`, no `|| true` and no trailing `exit 0` anywhere in it,
+  the exit code is recorded rather than discarded, and the final step refuses an
+  empty or non numeric recorded code because a run that reached no verdict
+  validated nothing. Pointed at an empty directory, at a directory holding no
+  CSV, or at a header matching no published template, the job fails.
+  `.github/workflows/action-selftest.yml` runs the action over the repository's
+  own fixtures for ten cases and compares each job outcome against the one the
+  case states, and `tests/test_ci_action.py` puts every exit code the matrix
+  claims through the CLI so those constants cannot go stale unnoticed.
+- A "Running it in CI" section in `docs/filer-guide.md`, with a workflow
+  example, a `repos:` entry, and the two limits worth knowing before adopting
+  either: the action cannot verify the signature on its own tag, because an
+  action checkout has no history to verify against, so the guide shows how to
+  run `git verify-tag` against a clone instead; and an uploaded SARIF names each
+  input by base name, so code scanning attaches alerts to lines only when the
+  filing sits at the repository root.
 
 ### Fixed
 
