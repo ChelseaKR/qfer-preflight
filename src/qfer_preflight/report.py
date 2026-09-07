@@ -17,6 +17,7 @@ from .model import (
     BATCH_SCHEMA_VERSION,
     BatchEntry,
     Finding,
+    LedgerEntry,
     Report,
     Severity,
     severity_rank,
@@ -624,6 +625,75 @@ def _collapse_note(report: Report, line_count: int) -> list[str]:
     ]
 
 
+# What the ledger's `column` cell says for a rule that reads no column, and for
+# one whose column this form does not publish. Two different silences, written
+# differently: the first is a rule about the submission as an object, the
+# second is a rule that cannot apply here at all.
+_NO_COLUMN = "(no column)"
+_ABSENT_COLUMN = "(not on this form)"
+
+_LEDGER_ZERO_NOTES: dict[str, str] = {
+    "no_applicable_rows": "judged nothing: no row fell inside its published applicability",
+    "blocked_by": "judged nothing: stopped by {blocked_by}",
+    "column_absent": "judged nothing: this form publishes no column it reads",
+}
+
+_LEDGER_PREAMBLE = (
+    "  What each rule read on this file. A measurement of the run, not a check: "
+    "it adds no severity,\n"
+    "  cites nothing and changes no verdict. 'judged' is a verdict reached, "
+    "'exempt' is a row the\n"
+    "  rule's own published applicability does not reach, 'blocked' is a row an "
+    "earlier rule left\n"
+    "  unreadable. A rule that judged nothing says which of the three it was, "
+    "because a bare zero\n"
+    "  here reads exactly like a clean result."
+)
+
+
+def _ledger_column_label(entry: LedgerEntry) -> str:
+    if entry.column is not None:
+        return entry.column
+    return _ABSENT_COLUMN if entry.zero_reason == "column_absent" else _NO_COLUMN
+
+
+def _ledger_note(entry: LedgerEntry) -> str:
+    if entry.zero_reason is None:
+        return ""
+    template = _LEDGER_ZERO_NOTES[entry.zero_reason]
+    return "  " + template.format(blocked_by=entry.blocked_by)
+
+
+def _ledger_section(report: Report) -> list[str]:
+    """The per rule, per column table of what actually ran.
+
+    Rendered only when the engine filled it in. A `Report` assembled by hand
+    carries no ledger and printing an empty table for one would state a
+    measurement nobody took.
+    """
+    if not report.evaluation:
+        return []
+    ordered = sorted(report.evaluation, key=lambda e: (e.rule_id, e.column or ""))
+    width = max(len(_ledger_column_label(entry)) for entry in ordered)
+    silent = sum(1 for entry in ordered if entry.judged == 0)
+    heading = f"Evaluation ledger ({len(ordered)} entries"
+    heading += f", {silent} judged nothing):" if silent else "):"
+    lines = [heading, _LEDGER_PREAMBLE]
+    for entry in ordered:
+        label = _ledger_column_label(entry).ljust(width)
+        counts = (
+            f"judged {entry.judged:,} of {entry.offered:,} {entry.subject}"
+            f"{'' if entry.offered == 1 else 's'}"
+        )
+        if entry.exempt:
+            counts += f", exempt {entry.exempt:,}"
+        if entry.blocked:
+            counts += f", blocked {entry.blocked:,} by {entry.blocked_by}"
+        lines.append(f"  {entry.rule_id}  {label}  {counts}{_ledger_note(entry)}")
+    lines.append("")
+    return lines
+
+
 def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str:
     """Human readable rendering."""
     lines: list[str] = []
@@ -653,6 +723,8 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
         for item in report.rules_not_evaluated:
             lines.append(f"  [UNVAL] {item.rule_id}: {item.reason}")
         lines.append("")
+
+    lines.extend(_ledger_section(report))
 
     lines.append(
         f"Rules evaluated: {len(report.rules_evaluated)}"

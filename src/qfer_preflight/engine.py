@@ -53,9 +53,9 @@ from .describe import (
     hidden_characters,
     show,
 )
-from .model import Advisory, Finding, NotEvaluated, Report, Severity
+from .model import Advisory, Finding, LedgerEntry, NotEvaluated, Report, Severity
 from .profiles import Profile
-from .rules import RuleSpec, specs_for
+from .rules import RULE_SPECS, RuleSpec, specs_for
 
 TOOL_NAME = "qfer-preflight"
 
@@ -75,6 +75,121 @@ _FORBIDDEN_PLACEHOLDERS = {"", "NULL", "-"}
 # Rules that survive a header mismatch because they do not depend on knowing
 # which column is which.
 _HEADER_INDEPENDENT = frozenset({"QP001", "QP002", "QP004", "QP006"})
+
+# ---------------------------------------------------------------------------
+# The evaluation ledger: which column each rule reads, and in what unit it
+# counts.
+#
+# `docs/column-coverage.md` maps columns to rules in the abstract and
+# `tests/test_column_coverage.py` holds that map against the registry. This
+# table is the same mapping expressed where the engine can act on it, and
+# tests/test_evaluation_ledger.py derives one from the other so the two cannot
+# drift: a rule added to the registry and mapped in the document but missed
+# here would otherwise be a rule the ledger silently never mentions, which is
+# the failure the ledger exists to make impossible.
+#
+# The value is the name of the `Profile` attribute holding the column, not a
+# column name, because the same rule reads `Month` on one form and
+# `MonthNumber` on another.
+# ---------------------------------------------------------------------------
+
+_RULE_COLUMN_ROLES: dict[str, str] = {
+    "QP010": "year_column",
+    "QP011": "month_column",
+    "QP012": "quarter_column",
+    "QP013": "county_column",
+    "QP014": "customer_type_column",
+    "QP015": "customer_group_column",
+    "QP016": "rate_code_column",
+    "QP017": "naics_column",
+    "QP021": "company_number_column",
+    "QP022": "udc_column",
+    "QP023": "naics_column",
+    "QP024": "county_column",
+    "QP025": "customer_type_column",
+    "QP030": "month_column",
+    "QP031": "year_column",
+    "QP033": "company_number_column",
+}
+
+# The two rules that read every column the instructions mark with the shared
+# numeric footnote, rather than one named column.
+_NUMERIC_COLUMN_RULES: tuple[str, ...] = ("QP019", "QP020")
+
+# What the remaining implemented rules count. QP001 and QP006 read the
+# submission as an object, QP002 reads the one header row, and the other three
+# are offered records. A rule that reads the file cannot be reported in rows:
+# "judged 1" against a subject of "file" is complete, and against a subject of
+# "row" it would look like a rule that had stopped after the first line.
+_FILE_LEVEL_LEDGER_SUBJECTS: dict[str, str] = {
+    "QP001": "file",
+    "QP002": "header",
+    "QP003": "row",
+    "QP004": "row",
+    "QP006": "file",
+    "QP007": "row",
+}
+
+
+def _ledger_columns(profile: Profile, rule_id: str) -> tuple[str, ...]:
+    """The columns this rule reads on this form, empty when the form has none.
+
+    Raises for a rule the two tables above do not place. A newly registered
+    implemented rule would otherwise be missing from every ledger, which is
+    the one thing a ledger of what ran must not be able to do quietly.
+    """
+    if rule_id in _NUMERIC_COLUMN_RULES:
+        return profile.numeric_columns
+    role = _RULE_COLUMN_ROLES.get(rule_id)
+    if role is None:
+        raise ValueError(
+            f"rule {rule_id} is implemented and the evaluation ledger does not "
+            "know which column it reads. Add it to _RULE_COLUMN_ROLES, to "
+            "_NUMERIC_COLUMN_RULES, or to _FILE_LEVEL_LEDGER_SUBJECTS"
+        )
+    column: str | None = getattr(profile, role)
+    return () if column is None else (column,)
+
+
+def _ledger_slots(profile: Profile) -> tuple[tuple[str, str | None, str, bool], ...]:
+    """Every (rule, column) pair the ledger reports for this form.
+
+    The last element of each slot says whether the rule binds to the form. A
+    column rule whose column this template does not carry still gets a slot,
+    reported as `column_absent`, because "this form has no County Number, so
+    QP013 never ran" is an answer and silence is not. It is also the case
+    `--strict-ledger` has to be able to skip, which it can only do if the
+    ledger states it.
+
+    QP007 is the one rule deliberately left out where it does not bind. Its
+    applicability is textual rather than columnar: two of the five instruction
+    documents publish the words "extra headers" and three do not (ADR 0007).
+    Giving it a `column_absent` slot on those three would state a reason that
+    is not the reason, and this project would rather say nothing than say
+    something untrue. Where the text is absent the same observation is still
+    reported, as the `ADV-REPEATED-HEADER` advisory, and the mapping is
+    recorded in `docs/column-coverage.md`.
+    """
+    bound = {spec.id for spec in specs_for(profile)}
+    slots: list[tuple[str, str | None, str, bool]] = []
+    for spec in RULE_SPECS:
+        if not spec.implemented:
+            # Registered, published and permanently unevaluated. It reads no
+            # row on any file, so a row count for it would be a count of
+            # nothing rather than a measurement. `rules_not_evaluated` carries
+            # it in every report, with the reason and the promotion condition.
+            continue
+        if spec.id in _FILE_LEVEL_LEDGER_SUBJECTS:
+            if spec.id in bound:
+                slots.append((spec.id, None, _FILE_LEVEL_LEDGER_SUBJECTS[spec.id], True))
+            continue
+        columns = _ledger_columns(profile, spec.id)
+        if not columns:
+            slots.append((spec.id, None, "row", False))
+            continue
+        slots.extend((spec.id, column, "row", True) for column in columns)
+    return tuple(slots)
+
 
 # At most this many advisories per code and column. Beyond it the reader keeps
 # counting but stops listing, so a formula in every row of a 400,000 row file
@@ -190,6 +305,15 @@ class _Collector:
         self._not_evaluated: dict[str, str] = {}
         self._advisories: dict[tuple[str, str], Advisory] = {}
         self._advisory_counts: dict[tuple[str, str], int] = {}
+        # The evaluation ledger, kept as the rows go past rather than
+        # recomputed afterwards. Keyed by rule and column, three counters each,
+        # plus the rules that stopped this one. Nothing here grows with the
+        # size of the filing: the keys are fixed by the profile before the
+        # first row is read.
+        self._judged: dict[tuple[str, str], int] = {}
+        self._exempt: dict[tuple[str, str], int] = {}
+        self._blocked: dict[tuple[str, str], int] = {}
+        self._blockers: dict[tuple[str, str], dict[str, int]] = {}
 
     @property
     def findings(self) -> list[Finding]:
@@ -279,6 +403,128 @@ class _Collector:
         self._advisories[(code, f"{column or ''}#{self._advisory_counts[key]}")] = Advisory(
             code=code, message=message, row=row, column=column
         )
+
+    # -----------------------------------------------------------------------
+    # The evaluation ledger
+    # -----------------------------------------------------------------------
+
+    def judged(self, rule_id: str, column: str | None = None, count: int = 1) -> None:
+        """Record that the rule reached a verdict, finding or not, on `count` units."""
+        key = (rule_id, column or "")
+        self._judged[key] = self._judged.get(key, 0) + count
+
+    def exempt(self, rule_id: str, column: str | None = None, count: int = 1) -> None:
+        """Record units the rule's own published applicability does not reach.
+
+        Not a pass and not a failure to run: the rule looked, and the text it
+        rests on says nothing about a value of this shape. QP023 reads the
+        published residential classification table, so a plain NAICS code is
+        outside it; QP033 reads the form of a company number, so an empty cell
+        is QP021's business rather than its own.
+        """
+        key = (rule_id, column or "")
+        self._exempt[key] = self._exempt.get(key, 0) + count
+
+    def blocked(self, rule_id: str, column: str | None, blocker: str, count: int = 1) -> None:
+        """Record units an earlier rule left unreadable, and name that rule."""
+        key = (rule_id, column or "")
+        self._blocked[key] = self._blocked.get(key, 0) + count
+        self.note_blocker(rule_id, column, blocker)
+
+    def note_blocker(self, rule_id: str, column: str | None, blocker: str) -> None:
+        """Name the rule that stopped this one, even where no unit was reached.
+
+        A file that does not decode never reaches a row, so every column rule
+        is stopped having been offered nothing at all. Counting zero blocked
+        rows there is accurate and useless on its own; the reader still has to
+        be told that QP001 is why.
+        """
+        key = (rule_id, column or "")
+        tally = self._blockers.setdefault(key, {})
+        tally[blocker] = tally.get(blocker, 0) + 1
+
+    def _blocker_for(self, key: tuple[str, str]) -> str | None:
+        """The rule that stopped this one, where more than one did.
+
+        Ranked by how many units each stopped, then by identifier so the
+        answer does not depend on dictionary order. Only ever consulted for an
+        entry that names a blocker at all.
+        """
+        tally = self._blockers.get(key)
+        if not tally:
+            return None
+        return min(tally, key=lambda rule_id: (-tally[rule_id], rule_id))
+
+    def ledger(self) -> list[LedgerEntry]:
+        """Every implemented rule, what it read on this file, and what it did not.
+
+        The entries are built from the counters above and from the profile,
+        never from a second pass over the filing. A rule whose counters were
+        never touched still gets an entry: that is the case the ledger is for.
+
+        It takes no row count and deliberately does not consult one. Each entry
+        carries what that rule was actually offered, which is the same number as
+        `rows_read` for every column rule and larger for QP004, the one rule
+        whose subject includes the blank rows `rows_read` excludes. Handing the
+        total in and dividing by it would be how those two quietly became the
+        same number.
+        """
+        if self._profile is None:  # pragma: no cover - engine paths all pass one
+            raise ValueError("a ledger cannot be built without the profile whose columns it maps")
+        entries = [
+            self._entry(rule_id, column, subject, bound)
+            for rule_id, column, subject, bound in _ledger_slots(self._profile)
+        ]
+        self._refuse_unmapped_counters({(entry.rule_id, entry.column or "") for entry in entries})
+        return entries
+
+    def _entry(self, rule_id: str, column: str | None, subject: str, bound: bool) -> LedgerEntry:
+        key = (rule_id, column or "")
+        judged = self._judged.get(key, 0)
+        exempt = self._exempt.get(key, 0)
+        blocked = self._blocked.get(key, 0)
+        blocker = self._blocker_for(key)
+        zero_reason: str | None = None
+        if judged == 0:
+            if not bound:
+                zero_reason = "column_absent"
+            elif blocker is not None:
+                zero_reason = "blocked_by"
+            else:
+                zero_reason = "no_applicable_rows"
+        names_blocker = blocked > 0 or zero_reason == "blocked_by"
+        return LedgerEntry(
+            rule_id=rule_id,
+            column=column,
+            subject=subject,
+            evaluated=rule_id in self.evaluated,
+            offered=judged + exempt + blocked,
+            judged=judged,
+            exempt=exempt,
+            blocked=blocked,
+            zero_reason=zero_reason,
+            blocked_by=blocker if names_blocker else None,
+        )
+
+    def _refuse_unmapped_counters(self, known: set[tuple[str, str]]) -> None:
+        """Refuse a count recorded against a rule and column the ledger does not list.
+
+        Without this, a check that recorded its rows under a misspelled rule
+        identifier, or under a column the profile does not carry, would lose
+        every one of them silently and the entry it meant to fill would report
+        zero judged with a reason invented for it. That is the exact shape of
+        the defect this ledger was written to expose, so it may not be the
+        shape of its own bug.
+        """
+        counted = set(self._judged) | set(self._exempt) | set(self._blocked) | set(self._blockers)
+        stray = sorted(counted - known)
+        if stray:
+            rendered = ", ".join(f"{rule_id}/{column or 'no column'}" for rule_id, column in stray)
+            raise ValueError(
+                f"the evaluation ledger counted rows against {rendered}, which it "
+                "does not list. Those rows would vanish from the report and the "
+                "entry they belong to would say it judged nothing"
+            )
 
     def has_finding_at(self, row: int, column: str) -> bool:
         """Whether a cited rule has already spoken about this exact cell.
@@ -806,6 +1052,9 @@ def _hidden_character_advisory(
 
 def _check_header(collector: _Collector, profile: Profile, header: Sequence[str]) -> bool:
     collector.mark_evaluated("QP002")
+    # One header row, judged. Reaching here at all means a first record was
+    # read, which is the only unit this rule is ever offered.
+    collector.judged("QP002")
     if tuple(header) == profile.header:
         return True
     collector.add("QP002", header_report(profile.header, list(header)), row=1)
@@ -813,7 +1062,13 @@ def _check_header(collector: _Collector, profile: Profile, header: Sequence[str]
 
 
 def _check_numeric_cell(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    collector.judged("QP019", column)
     if value.strip().upper() in _FORBIDDEN_PLACEHOLDERS:
+        # QP020 reads the characters in a number, and a cell holding a blank,
+        # "NULL" or "-" holds no number to read. The instructions cover it in
+        # the other footnote, which is QP019 above, so QP020 is exempt here
+        # rather than silently agreeing with a finding it did not make.
+        collector.exempt("QP020", column)
         collector.add(
             "QP019",
             (
@@ -825,6 +1080,7 @@ def _check_numeric_cell(collector: _Collector, column: str, value: str, row_numb
             column=column,
         )
         return
+    collector.judged("QP020", column)
     if not _NUMERIC_VALUE.fullmatch(value):
         collector.add(
             "QP020",
@@ -856,6 +1112,7 @@ def _check_enum_cell(
     *,
     note: str = "",
 ) -> None:
+    collector.judged(rule_id, column)
     allowed_set = set(allowed)
     if value in allowed_set:
         return
@@ -868,7 +1125,13 @@ def _check_enum_cell(
 
 
 def _check_county(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    # QP024 reads every county cell. Its published sentence is about a value
+    # carrying a leading zero, and a value that carries none conforms to it as
+    # surely as one that has been corrected, so the verdict is reached either
+    # way. Only QP013 steps aside below.
+    collector.judged("QP024", column)
     if value in COUNTY_NUMBERS:
+        collector.judged("QP013", column)
         return
 
     # A two-character zero-padded county, "01" to "09". The published table
@@ -878,6 +1141,11 @@ def _check_county(collector: _Collector, column: str, value: str, row_number: in
     # error. So this is a warning, not a failure. See ADR 0003.
     unpadded = PADDED_COUNTY_NUMBERS.get(value)
     if unpadded is not None:
+        # QP013 reaches no verdict on a padded county. The value is not in the
+        # published table, so its literal test would call it an error, and ADR
+        # 0003 says no published source does. The rule stands aside for QP024
+        # rather than being recorded as having passed the value.
+        collector.exempt("QP013", column)
         collector.add(
             "QP024",
             (
@@ -894,6 +1162,7 @@ def _check_county(collector: _Collector, column: str, value: str, row_number: in
         )
         return
 
+    collector.judged("QP013", column)
     collector.add(
         "QP013",
         (
@@ -922,7 +1191,12 @@ def _county_hint(value: str) -> str:
 
 
 def _check_customer_type(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    # QP025 reads every Customer Type cell: its question is whether this value
+    # is the one the workshop deck publishes and the instructions do not, and
+    # "no" is a verdict.
+    collector.judged("QP025", column)
     if value in CUSTOMER_TYPES:
+        collector.judged("QP014", column)
         return
 
     # The workshop deck lists a Customer Type the instruction PDF does not.
@@ -930,6 +1204,9 @@ def _check_customer_type(collector: _Collector, column: str, value: str, row_num
     # value an error and says why instead. See ADR 0003.
     restriction = CUSTOMER_TYPES_WORKSHOP_ONLY.get(value)
     if restriction is not None:
+        # Two published CEC documents disagree about this value, so QP014
+        # reaches no verdict on it. See ADR 0003 and ADR 0005.
+        collector.exempt("QP014", column)
         collector.add(
             "QP025",
             (
@@ -951,6 +1228,7 @@ def _check_customer_type(collector: _Collector, column: str, value: str, row_num
         return
 
     legend = "; ".join(f"{code} = {name}" for code, name in sorted(CUSTOMER_TYPES.items()))
+    collector.judged("QP014", column)
     collector.add(
         "QP014",
         (
@@ -980,6 +1258,7 @@ def _naics_hint(value: str) -> str:
 
 
 def _check_naics(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    collector.judged("QP017", column)
     if len(value) != 6:
         collector.add(
             "QP017",
@@ -994,7 +1273,18 @@ def _check_naics(collector: _Collector, column: str, value: str, row_number: int
             row=row_number,
             column=column,
         )
-    if value.strip().upper().startswith("RE") and value not in RESIDENTIAL_CLASSIFICATION_CODES:
+    # QP023's published text is the "Residential CEC Custom Classification
+    # Codes" table, which is about codes of that shape. A plain six-digit NAICS
+    # code is not one, so the rule reaches no verdict on it. Written as two
+    # nested conditions rather than one joined by `and`, because the ledger has
+    # to be able to tell "no residential code in this file" from "every
+    # residential code in this file was published", and a single condition
+    # collapses the two into one silence.
+    if not value.strip().upper().startswith("RE"):
+        collector.exempt("QP023", column)
+        return
+    collector.judged("QP023", column)
+    if value not in RESIDENTIAL_CLASSIFICATION_CODES:
         custom = ", ".join(f"{code} ({name})" for code, name in CUSTOM_CLASSIFICATION_CODES.items())
         collector.add(
             "QP023",
@@ -1021,6 +1311,7 @@ def _check_integer_range(
     row_number: int,
     example: str,
 ) -> int | None:
+    collector.judged(rule_id, column)
     if _SMALL_INT.fullmatch(value):
         number = int(value)
         if low <= number <= high:
@@ -1053,6 +1344,7 @@ def _check_integer_range(
 
 
 def _check_year(collector: _Collector, column: str, value: str, row_number: int) -> str | None:
+    collector.judged("QP010", column)
     if not _FOUR_DIGIT_YEAR.fullmatch(value):
         collector.add(
             "QP010",
@@ -1081,7 +1373,12 @@ def _check_company_number_form(
     """
     stripped = value.strip()
     if not stripped:
+        # Nothing here has a form to be wrong. The blank is QP021's finding,
+        # and recording this row as judged would let QP033 claim a verdict it
+        # declined to reach.
+        collector.exempt("QP033", column)
         return
+    collector.judged("QP033", column)
     if _COMPANY_NUMBER_DIGITS.fullmatch(stripped):
         return
     collector.add(
@@ -1107,23 +1404,33 @@ def _check_identity_columns(
 ) -> None:
     """Company number, year, month and quarter."""
     column = profile.company_number_column
-    if column and not cell(column).strip():
-        collector.add(
-            "QP021",
-            (
-                f"{column} is {show(cell(column))}. Every row needs the "
-                "identification number CEC staff assigned to your company."
-            ),
-            row=row_number,
-            column=column,
-        )
     if column:
+        collector.judged("QP021", column)
+        if not cell(column).strip():
+            collector.add(
+                "QP021",
+                (
+                    f"{column} is {show(cell(column))}. Every row needs the "
+                    "identification number CEC staff assigned to your company."
+                ),
+                row=row_number,
+                column=column,
+            )
         _check_company_number_form(collector, column, cell(column), row_number)
 
+    # The two cross-row rules are counted here, a row at a time, because that
+    # is where the value they later reason over is either obtained or lost.
+    # QP030 compares the months in the submission and QP031 the years, so a row
+    # whose Month or Year the field rule could not read is a row neither of
+    # them can speak for. Counting them at the end, when only the collected set
+    # survives, would report the rule as having judged the whole file.
     if profile.year_column:
         year = _check_year(collector, profile.year_column, cell(profile.year_column), row_number)
         if year:
             seen["years"].add(year)
+            collector.judged("QP031", profile.year_column)
+        else:
+            collector.blocked("QP031", profile.year_column, "QP010")
 
     if profile.month_column:
         month = _check_integer_range(
@@ -1138,6 +1445,9 @@ def _check_identity_columns(
         )
         if month is not None:
             seen["months"].add(str(month))
+            collector.judged("QP030", profile.month_column)
+        else:
+            collector.blocked("QP030", profile.month_column, "QP011")
 
     if profile.quarter_column:
         _check_integer_range(
@@ -1212,6 +1522,10 @@ def _repeated_header_row(
     cited error on two forms and an advisory on the other three, and QP007 is
     registered only where the text exists. See ADR 0007.
     """
+    if collector.has_rule("QP007"):
+        # Judged before the comparison, not after it. The rule's question is
+        # "is this row a copy of the header", and "no" answers it.
+        collector.judged("QP007")
     if tuple(row) != profile.header:
         return
     tail = (
@@ -1345,6 +1659,28 @@ def _next_row(rows: Iterator[list[str]]) -> list[str] | None:
         raise _CsvParseFailure(str(exc)) from exc
 
 
+def _column_ledger_slots(profile: Profile) -> tuple[tuple[str, str], ...]:
+    """Every rule and column this form counts a verdict for, once per data row."""
+    return tuple(
+        (rule_id, column)
+        for rule_id, column, _subject, _bound in _ledger_slots(profile)
+        if column is not None
+    )
+
+
+def _block_row(
+    collector: _Collector,
+    column_slots: Sequence[tuple[str, str]],
+    structural: Sequence[str],
+    blocker: str,
+) -> None:
+    """Record one row as unreadable to every rule the named rule stopped."""
+    for rule_id, column in column_slots:
+        collector.blocked(rule_id, column, blocker)
+    for rule_id in structural:
+        collector.blocked(rule_id, None, blocker)
+
+
 def _scan_rows(
     collector: _Collector,
     profile: Profile,
@@ -1354,6 +1690,10 @@ def _scan_rows(
     """Walk the data rows. Returns the number of non-blank data rows seen."""
     expected_width = len(profile.header)
     seen: dict[str, set[str]] = {"months": set(), "years": set()}
+    # Fixed before the first row is read, so the per-row bookkeeping below is a
+    # walk over a tuple whose length is the profile's, not the filing's.
+    column_slots = _column_ledger_slots(profile)
+    repeated_header = ("QP007",) if collector.has_rule("QP007") else ()
     data_rows = 0
     offset = 1
 
@@ -1362,6 +1702,11 @@ def _scan_rows(
         if row is None:
             break
         offset += 1
+        # QP004 is offered every record, blank ones included. That is why it is
+        # the one rule whose ledger entry can report more rows than `rows_read`:
+        # a blank row is exactly what it exists to find, and `rows_read` counts
+        # the rows that had something in them.
+        collector.judged("QP004")
         if not any(cell.strip() for cell in row):
             collector.add(
                 "QP004",
@@ -1374,9 +1719,18 @@ def _scan_rows(
             continue
         data_rows += 1
         if not header_ok:
+            _block_row(collector, column_slots, ("QP003", *repeated_header), "QP002")
             continue
+        collector.judged("QP003")
         if len(row) != expected_width:
             collector.add("QP003", _width_message(profile, row, expected_width), row=offset)
+            # The row has the wrong number of fields, so which value sits in
+            # which column is unknown for this row and every column rule is
+            # stopped on it. Recorded per row rather than per file: a filing
+            # with one short row among four hundred thousand good ones has one
+            # blocked row, and saying so is the difference between a rule that
+            # nearly ran and one that did not.
+            _block_row(collector, column_slots, repeated_header, "QP003")
             continue
         _row_checks(collector, profile, row, offset, seen)
 
@@ -1400,6 +1754,7 @@ def _read_and_scan(
     if header is None:
         _blocked(
             collector,
+            profile,
             "The file could not be parsed as CSV.",
             "The submission could not be parsed, so this rule was never applied.",
         )
@@ -1415,10 +1770,16 @@ def _read_and_scan(
                 "not apply this rule."
             ),
         )
+        # Named in the ledger as well as in the reason text above. A file with
+        # a wrong header and no data rows blocks every column rule without any
+        # row reaching one, so the count of blocked rows is zero and only the
+        # blocker says what happened.
+        _note_blocked_by(collector, profile, _HEADER_INDEPENDENT, "QP002")
     else:
         collector.mark_evaluated(*_column_dependent_rule_ids(specs))
 
     collector.mark_evaluated("QP003", "QP004", "QP006")
+    collector.judged("QP006")
     try:
         data_rows = _scan_rows(collector, profile, rows, header_ok)
     except _CsvParseFailure as failure:
@@ -1465,9 +1826,27 @@ def _width_message(profile: Profile, row: Sequence[str], expected_width: int) ->
     return message
 
 
-def _blocked(collector: _Collector, detail: str, reason: str) -> None:
+def _note_blocked_by(
+    collector: _Collector, profile: Profile, keep: Iterable[str], blocker: str
+) -> None:
+    """Name the rule that stopped everything the ledger lists, bar the keepers.
+
+    Separate from `_Collector.block_all_except`, which moves rules into
+    `rules_not_evaluated`, because the two answer different questions and are
+    not always asked together. A rule can be listed as evaluated and still have
+    judged nothing, which is the case this whole ledger was written for.
+    """
+    kept = set(keep)
+    for rule_id, column, _subject, bound in _ledger_slots(profile):
+        if rule_id in kept or not bound:
+            continue
+        collector.note_blocker(rule_id, column, blocker)
+
+
+def _blocked(collector: _Collector, profile: Profile, detail: str, reason: str) -> None:
     collector.add("QP001", detail)
     collector.block_all_except(["QP001"], reason)
+    _note_blocked_by(collector, profile, ["QP001"], "QP001")
 
 
 def _empty_detail(ingest: _Ingest) -> str:
@@ -1527,6 +1906,10 @@ def _validate_ingest(
     )
 
     collector.mark_evaluated("QP001")
+    # One file, judged. QP001 asks whether this is a non-empty file that parses
+    # as CSV, and it reaches that verdict on every path below, including the
+    # ones where the answer stops everything else.
+    collector.judged("QP001")
     # Before the decode, not after it. A byte order mark is a fact about the
     # file, and it is still a fact when the file turns out not to be UTF-8.
     _bom_advisory(collector, ingest.had_bom)
@@ -1534,6 +1917,7 @@ def _validate_ingest(
     if ingest.decode_detail is not None:
         _blocked(
             collector,
+            profile,
             (
                 f"The file is not valid UTF-8 text: {ingest.decode_detail}. This tool "
                 "reads UTF-8, so it could not open the file and validated "
@@ -1546,6 +1930,7 @@ def _validate_ingest(
     if not ingest.has_content:
         _blocked(
             collector,
+            profile,
             f"{_empty_detail(ingest)} Nothing in it could be validated.",
             "The submission could not be read, so this rule was never applied.",
         )
@@ -1556,6 +1941,7 @@ def _validate_ingest(
     if ingest.truncated_quote:
         _blocked(
             collector,
+            profile,
             (
                 "The file ends in the middle of a quoted value: a double "
                 "quotation mark opens a field that is never closed before the "
@@ -1639,8 +2025,14 @@ def _parse_failure(
     fresh = _Collector(specs, profile)
     fresh.register_unimplemented()
     fresh.mark_evaluated("QP001")
+    # The ledger is rebuilt with the findings, from this collector rather than
+    # the abandoned one. Rows counted before the reader gave up were counted
+    # over a prefix nothing stands behind, and carrying them here would report
+    # a rule as having judged rows in a file that was never validated.
+    fresh.judged("QP001")
     _blocked(
         fresh,
+        profile,
         (
             f"The file could not be parsed as CSV: {detail}. No rule was "
             "applied to any part of it, including the rows before the point "
@@ -1659,6 +2051,7 @@ def _finish(report: Report, collector: _Collector, rows_read: int) -> Report:
     report.rules_not_evaluated = collector.not_evaluated
     report.advisories = collector.advisories
     report.rows_read = rows_read
+    report.evaluation = collector.ledger()
     _refuse_contradictions(report, collector.registered)
     return report
 

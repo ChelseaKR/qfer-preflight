@@ -2,6 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "qfer-preflight validation report, schema version 1",
   "description": "The document produced by `qfer-preflight check --format json`. Schema version 1 is the first published shape. Compatibility policy: adding an optional field or a new enum value is a minor change and bumps the minor version; removing a field, renaming a field, changing a type, or tightening a constraint that existing reports satisfy is breaking and bumps the major version. The `schema_version` integer in the report names the major version it conforms to.",
+  "minorVersion": 1,
+  "minorVersionHistory": [
+    "1.0: the first published shape.",
+    "1.1: adds the optional `evaluation` ledger, one entry per rule and column, saying how many rows each rule judged on this file. Optional rather than required, because a report written by an earlier version has no such field and requiring it would retroactively invalidate documents this schema already described."
+  ],
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -105,6 +110,11 @@
     "advisories": {
       "type": "array",
       "items": { "$ref": "#/$defs/advisory" }
+    },
+    "evaluation": {
+      "type": "array",
+      "description": "What each rule read on this file, one entry per rule and per column it touches. A measurement of the run: it carries no severity, cites no document and moves no verdict. Added at minor version 1.1 and therefore optional: a report produced before it exists is still a valid version 1 report.",
+      "items": { "$ref": "#/$defs/ledgerEntry" }
     }
   },
   "$defs": {
@@ -141,6 +151,64 @@
           "type": "integer",
           "minimum": 1,
           "description": "Present only when the finding was merged."
+        }
+      }
+    },
+    "ledgerEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_id",
+        "column",
+        "subject",
+        "evaluated",
+        "offered",
+        "judged",
+        "exempt",
+        "blocked"
+      ],
+      "properties": {
+        "rule_id": { "$ref": "#/$defs/ruleId" },
+        "column": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "description": "The column this entry counts, or null when the rule reads the submission as an object or when this form publishes no column it reads. `subject` and `zero_reason` say which."
+        },
+        "subject": {
+          "enum": ["file", "header", "row"],
+          "description": "The unit `offered` counts. Without it, judged 1 of 1 file could not be told from a rule that stopped after the first row."
+        },
+        "evaluated": {
+          "type": "boolean",
+          "description": "Whether the rule was applied at all on this run, matching its presence in `rules_evaluated`. A rule can be evaluated and still have judged nothing, which is the distinction this ledger exists to publish."
+        },
+        "offered": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Units handed to this rule. Always equal to judged plus exempt plus blocked. Equal to `counts.rows_read` for every row rule except QP004, whose subject includes the blank rows rows_read excludes."
+        },
+        "judged": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Units the rule reached a verdict on, whether or not it produced a finding."
+        },
+        "exempt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Units the rule's own published applicability does not reach, so it declined to reach a verdict."
+        },
+        "blocked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Units an earlier rule left unreadable. The rule that stopped them is named in blocked_by."
+        },
+        "zero_reason": {
+          "enum": ["no_applicable_rows", "blocked_by", "column_absent"],
+          "description": "Present exactly when judged is 0, and absent otherwise. A zero with no reason beside it reads as a clean result, which is the failure this ledger was written to prevent."
+        },
+        "blocked_by": {
+          "$ref": "#/$defs/ruleId",
+          "description": "The rule that stopped this one. Present when blocked is above zero, or when zero_reason is blocked_by."
         }
       }
     },

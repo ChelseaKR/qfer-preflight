@@ -4,7 +4,8 @@ Exit codes:
   0  no error-level findings
   1  at least one error-level finding, or, with --strict, anything the tool
      could not reach a verdict on: a rule that was not evaluated, or an
-     advisory the reader raised
+     advisory the reader raised, or, with --strict-ledger, a rule that judged
+     no rows at all on a column this form carries
   2  the tool was asked for something it could not do
 """
 
@@ -25,7 +26,7 @@ from .engine import TOOL_NAME, validate_path
 from .explain import ExplainError, explain
 from .explain import render_json as explain_json
 from .explain import render_text as explain_text
-from .model import BatchEntry, Status
+from .model import BatchEntry, Report, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
 from .report import (
     batch_to_json,
@@ -91,6 +92,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "also exit non-zero when any rule could not be evaluated or the "
             "reader raised an advisory"
+        ),
+    )
+    check.add_argument(
+        "--strict-ledger",
+        action="store_true",
+        help=(
+            "also exit non-zero when a rule judged no rows at all on a column "
+            "this form carries, whatever the reason. A clean filing can fail "
+            "this: a rule with nothing to judge is still a rule that judged "
+            "nothing"
         ),
     )
 
@@ -322,6 +333,45 @@ def _resolve_profile(args: argparse.Namespace) -> tuple[Profile | None, str | No
     return None, None
 
 
+def _rules_that_judged_nothing(report: Report) -> list[str]:
+    """Ledger entries where a rule judged no row of a column this form carries.
+
+    The gate `--strict-ledger` reads. It looks only at entries naming a column,
+    which is what excludes a rule the form publishes no column for: that rule
+    judging nothing is a fact about the template, not about this filing.
+
+    It does not sort the reasons into acceptable and unacceptable ones, and it
+    is not meant to. A rule blocked by a wrong header and a rule with nothing
+    in its published scope have judged the same number of rows, and a caller
+    who has turned this on has said that number is what they are gating on.
+    """
+    return sorted(
+        f"{entry.rule_id} on {entry.column}"
+        for entry in report.evaluation
+        if entry.column is not None and entry.judged == 0
+    )
+
+
+def _report_ledger_gaps(input_name: str, report: Report) -> bool:
+    """Say on stderr which rules judged nothing, and whether any did.
+
+    On stderr rather than stdout because stdout is the report, and a caller
+    piping JSON into another tool must keep getting JSON. A non-zero exit with
+    nothing said about why is the kind of gate people switch off.
+    """
+    silent = _rules_that_judged_nothing(report)
+    if not silent:
+        return False
+    subject = "pair" if len(silent) == 1 else "pairs"
+    print(
+        f"{input_name}: {len(silent)} rule and column {subject} judged no rows: "
+        f"{', '.join(silent)}. The evaluation ledger in the report says why each "
+        "one judged nothing.",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _check_single(path: str, args: argparse.Namespace) -> int:
     profile, problem = _resolve_profile(args)
     if problem is not None:
@@ -345,9 +395,12 @@ def _check_single(path: str, args: argparse.Namespace) -> int:
     sys.stdout.write(output)
 
     report = entry.report
+    gaps = args.strict_ledger and _report_ledger_gaps(entry.input_name, report)
     if report.status is Status.FAIL:
         return EXIT_FINDINGS
     if args.strict and report.status is Status.UNVALIDATED:
+        return EXIT_FINDINGS
+    if gaps:
         return EXIT_FINDINGS
     return EXIT_OK
 
@@ -369,12 +422,23 @@ def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
     )
     sys.stdout.write(output)
 
+    # Every entry is asked, not just the first one that answers yes, so a run
+    # over a directory names every input with a silent rule rather than the
+    # earliest.
+    gaps = args.strict_ledger and [
+        _report_ledger_gaps(entry.input_name, entry.report)
+        for entry in entries
+        if entry.report is not None
+    ]
+
     statuses = [entry.report.status for entry in entries if entry.report is not None]
     had_findings = any(
         status is Status.FAIL or (args.strict and status is Status.UNVALIDATED)
         for status in statuses
     )
     if had_findings:
+        return EXIT_FINDINGS
+    if gaps and any(gaps):
         return EXIT_FINDINGS
     if any(entry.problem is not None for entry in entries):
         return EXIT_USAGE

@@ -11,6 +11,13 @@ rule identifier named here exists in the registry; and every identifier in the
 registry is named here. A new column or a new rule cannot skip the map without
 failing the suite.
 
+This map is about the registry, not about any one filing. It says which rules
+*could* touch a column. What actually happened on a given file is the
+`evaluation` ledger in that file's report, described under "The per run ledger"
+at the bottom of this page, and the two are held against each other by
+`tests/test_evaluation_ledger.py`: a rule mapped to a column here must be a rule
+the ledger counts rows for there, and the reverse.
+
 ## How to read the tables
 
 - A rule identifier means a rule whose applicability names that column.
@@ -156,3 +163,55 @@ instructions that does publish a constraint finds its way to this file.
 Two rules grew out of the same reading pass: QP033 now covers every
 `CompanyNumber` column, and QP034 registers the workshop deck's comma
 sentence as permanently unevaluated.
+
+## The per run ledger
+
+A cell above saying `QP013` means QP013 reads that column on that form. It does
+not mean QP013 judged anything on the file in front of you, and the difference
+matters: a rule can be listed in `rules_evaluated`, correctly, having read every
+row and reached a verdict on none of them. `Findings: none` already reads as
+clean; a rule that judged nothing is the next version of the same silence.
+
+So every report carries an `evaluation` array, one entry per rule and per column
+it touches, with four numbers that add up:
+
+- **offered**, how many units the reader handed the rule. Data rows for a row
+  rule, the header row for QP002, the file for QP001 and QP006.
+- **judged**, how many it reached a verdict on, finding or no finding.
+- **exempt**, how many its own published applicability does not reach. QP023
+  reads the published residential classification table, so a plain NAICS code is
+  outside it. QP033 reads the form of a company number, so an empty cell is
+  QP021's business. QP013 stands aside for QP024 on a zero-padded county, and
+  QP014 for QP025 on a Customer Type the two published documents disagree about,
+  both under ADR 0003.
+- **blocked**, how many an earlier rule left unreadable, with that rule named.
+  A wrong header blocks every column rule under QP002; a row with the wrong
+  field count blocks them for that row under QP003; a Month QP011 could not read
+  blocks QP030 for that row.
+
+An entry that judged nothing carries `zero_reason`, one of `no_applicable_rows`,
+`blocked_by` or `column_absent`, and never carries one otherwise. That pairing is
+the whole point of the field: a bare `0` is indistinguishable from a clean
+result, and `evaluated` beside it separates "ran and judged nothing" from "never
+ran".
+
+Two deliberate asymmetries, recorded here so neither reads as an oversight:
+
+- **QP004 is the one rule whose `offered` can exceed `rows_read`.** Its subject
+  is every record including the blank ones, and `rows_read` counts the rows that
+  had something in them.
+- **QP007 gets no entry on the three forms it does not apply to.** Every other
+  unapplied rule gets one saying `column_absent`, but QP007's applicability is
+  textual rather than columnar: two instruction documents publish the words
+  "extra headers" and three do not (ADR 0007). Calling that a missing column
+  would state a reason that is not the reason. Where the text is absent the same
+  observation still reaches the report, as `ADV-REPEATED-HEADER`.
+
+Registered but unimplemented rules are absent from the ledger for the same
+reason: they read no row on any file, so a row count for them would be a count
+of nothing. They appear in `rules_not_evaluated` in every report, with the
+reason and the promotion condition.
+
+`--strict-ledger` turns the ledger into a gate: it exits non-zero when any rule
+judged no rows on a column the form carries. A clean filing can fail it, and
+that is the intended behaviour rather than a bug in the flag.
