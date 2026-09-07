@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
+from .detect import read_header_bytes
 from .diff import NotComparable, diff_reports, load_report, new_error_appeared
 from .diff import to_json as diff_to_json
 from .diff import to_text as diff_to_text
@@ -38,7 +39,7 @@ from .report import (
     to_json,
     to_text,
 )
-from .rules import RULE_SPECS, rules_for
+from .rules import all_rules, rules_for
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -138,82 +139,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_QUOTE = 0x22
-_COMMA = 0x2C
-_LINE_BREAKS = (0x0D, 0x0A)
-
-# How much of the file to take at a time while looking for the end of the
-# header. Large enough that a published header arrives in the first read, small
-# enough that it is not a meaningful amount of memory.
-_HEADER_CHUNK_BYTES = 1 << 16
-
-
-class _HeaderScan:
-    """Walks raw bytes looking for the end of the first CSV record.
-
-    Only three bytes decide where a record ends: the quotation mark, which
-    opens and closes a field a line break may sit inside, and the two line
-    break characters themselves. All three are ASCII, and no ASCII byte ever
-    appears inside a multi-byte UTF-8 sequence, so this can run on undecoded
-    bytes without ever matching part of a character. That is the point: the
-    bytes past the header must not be decoded at all.
-    """
-
-    __slots__ = ("_at_field_start", "_in_quotes", "_position")
-
-    def __init__(self) -> None:
-        self._at_field_start = True
-        self._in_quotes = False
-        self._position = 0
-
-    def end_within(self, buffer: bytes | bytearray) -> int | None:
-        """The index of the line break that ends the first record, if it is here.
-
-        Resumable: the position and the quote state carry across calls, so the
-        caller can keep handing over a longer buffer as it reads.
-        """
-        while self._position < len(buffer):
-            byte = buffer[self._position]
-            if self._in_quotes:
-                if byte != _QUOTE:
-                    self._position += 1
-                elif self._position + 1 >= len(buffer):
-                    return None  # a doubled quote and a closing one look alike here
-                elif buffer[self._position + 1] == _QUOTE:
-                    self._position += 2
-                else:
-                    self._in_quotes = False
-                    self._at_field_start = False
-                    self._position += 1
-                continue
-            if byte in _LINE_BREAKS:
-                return self._position
-            self._in_quotes = self._at_field_start and byte == _QUOTE
-            self._at_field_start = byte == _COMMA
-            self._position += 1
-        return None
-
-
-def _read_header_bytes(path: str) -> bytes:
-    """The bytes of the file's first CSV record, and not one byte more.
-
-    A file with no line break at all is one long record, so it is read whole,
-    which is the same shape of cost the validation run already accepts: peak
-    memory grows with the longest row, not with the size of the filing.
-    """
-    scan = _HeaderScan()
-    buffer = bytearray()
-    with open(path, "rb") as handle:
-        while True:
-            block = handle.read(_HEADER_CHUNK_BYTES)
-            if not block:
-                return bytes(buffer)
-            buffer.extend(block)
-            end = scan.end_within(buffer)
-            if end is not None:
-                return bytes(buffer[:end])
-
-
 def _detect_profile(path: str) -> tuple[Profile | None, str | None]:
     """Read the file's header row and match it against the published templates.
 
@@ -235,7 +160,7 @@ def _detect_profile(path: str) -> tuple[Profile | None, str | None]:
     names the byte exactly.
     """
     try:
-        raw = _read_header_bytes(path)
+        raw = read_header_bytes(path)
     except OSError as exc:
         return None, f"could not read {path}: {exc}"
     try:
@@ -456,11 +381,7 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     else:
         # Bind every rule to the first profile it applies to, purely so that a
         # citation can be rendered. The registry itself is profile agnostic.
-        rules = []
-        for spec in RULE_SPECS:
-            target = next((p for p in PROFILES.values() if spec.applies(p)), None)
-            if target is not None:
-                rules.append(spec.bind(target))
+        rules = list(all_rules())
     output = rules_to_json(rules) if args.format == "json" else rules_to_text(rules)
     sys.stdout.write(output)
     return EXIT_OK

@@ -85,6 +85,44 @@ decision to submit. Its examples are held against real runs by
 not have. Terms the Commission's documents use, and the ones this tool's
 reports use, are in [`docs/glossary.md`](docs/glossary.md).
 
+## Using it from Python
+
+A portal team, a filer's internal tooling or a notebook can validate without
+shelling out. The supported names are the ones `qfer_preflight.__all__` lists;
+everything else in the package is private and may move.
+
+```python
+from qfer_preflight import validate
+
+report = validate("filing.csv")  # profile detected from the header
+print(report.status)  # unvalidated
+print(report.error_count)  # 0
+print(len(report.rules_not_evaluated))  # 3
+print(report.to_json())  # the same JSON `check --format json` prints
+```
+
+`validate` takes a path or bytes, and `profile=` when you would rather name the
+form than have it detected. `report.to_json()`, `report.to_text()` and
+`report.to_sarif()` produce exactly what the corresponding `check --format`
+prints, byte for byte, because they call the same renderers. `profiles()` and
+`rules(profile=None)` expose the registry.
+
+Three guarantees come with these names:
+
+- **Fail-closed travels with the API.** A filing that could not be read comes
+  back as a `Report` whose verdict is not `pass`, never as an exception you
+  have to interpret and never as a clean result.
+- **Detection refuses rather than guessing.** A header matching no published
+  template, or more than one, raises `ProfileDetectionError` naming the near
+  misses. The near misses are advice for a person; nothing falls back to them.
+- **Importing the package reads nothing.** No file is opened and no argument
+  parser is imported at import time.
+
+**Stability policy**, the same one the JSON report schema follows: adding a
+name or an optional keyword argument is a minor version. Removing a name,
+renaming one, or changing the type a name returns is a major version. Anything
+not in `__all__` carries no promise at all.
+
 ## What it will not do
 
 The tool runs entirely on your machine. It opens no network connection, has no

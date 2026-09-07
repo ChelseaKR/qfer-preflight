@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from .model import Rule, Severity
-from .profiles import Profile
+from .profiles import PROFILES, Profile
 
 # ---------------------------------------------------------------------------
 # Shared quotes, keyed by profile id where the published wording differs.
@@ -627,3 +627,24 @@ def specs_for(profile: Profile) -> tuple[RuleSpec, ...]:
 def rules_for(profile: Profile) -> tuple[Rule, ...]:
     """Return the bound rules that apply to a profile, in registry order."""
     return tuple(spec.bind(profile) for spec in specs_for(profile))
+
+
+def all_rules() -> tuple[Rule, ...]:
+    """Every rule in the registry, in registry order.
+
+    The registry is profile agnostic, but a `Rule` carries a citation and a
+    citation is rendered against a form, so each spec is bound to the first
+    profile it applies to purely so that there is something to cite. A spec
+    that applies to no profile is left out rather than bound to an arbitrary
+    one: a rule with a citation pointing at a form it does not govern would
+    read as coverage that does not exist.
+
+    Both the `rules` subcommand and the published Python API call this, so the
+    two cannot drift into listing different registries.
+    """
+    bound = []
+    for spec in RULE_SPECS:
+        target = next((p for p in PROFILES.values() if spec.applies(p)), None)
+        if target is not None:
+            bound.append(spec.bind(target))
+    return tuple(bound)
