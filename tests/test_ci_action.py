@@ -83,6 +83,15 @@ PARITY_EXEMPT = {
     # No make target reproduces a GitHub Actions job status, which is the thing
     # under test. Exercised by this file.
     "action-selftest.yml",
+    # A quarterly NETWORK watcher over docs/source-manifest.md, not a gate over the
+    # working tree: it re-fetches the Commission's published documents and opens a
+    # review request when one has changed. No `make` target can reproduce it, because
+    # the whole point is reaching the live site, and the validator itself stays
+    # offline. The half that IS runnable locally is run locally and in CI:
+    # `uv run pytest tests/test_watch_sources.py` and
+    # `uv run python scripts/watch_sources.py --dry-run`, which is the workflow's own
+    # selftest job. Exercised by tests/test_watch_sources.py.
+    "source-watch.yml",
 }
 
 _SHA_PIN = re.compile(r"^[^@]+@[0-9a-f]{40}$")

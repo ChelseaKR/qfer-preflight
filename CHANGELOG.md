@@ -13,6 +13,32 @@ breaking change and is recorded here.
 
 ### Added
 
+- A source watcher, so the manifest's procedure stops depending on somebody
+  remembering it. `scripts/watch_sources.py` re-fetches every document in
+  `docs/source-manifest.md`, compares digests, and names the rules whose citations
+  point into anything that moved; `.github/workflows/source-watch.yml` runs it on the
+  8th of February, May, August and November, a week before each filing deadline, and
+  opens a pull request on drift. **The pull request updates nothing** -- a changed hash
+  means a rule may be quoting superseded text, and `source-manifest.md` already says
+  that deciding what that means is a person's ADR.
+
+  Four outcomes, kept apart on purpose: `unchanged`, `drifted`, `error` and
+  `not-checked`. **`error` is not `unchanged`**, and a run that could not fetch a
+  document exits 2 rather than reporting no drift, because a watcher that said "no
+  drift" while the Commission's web server was down would be a green light nobody had
+  earned.
+
+  `not-checked` exists because the first version of this script did not have it and
+  committed the defect it was written to prevent: `--dry-run` printed
+  `13 unchanged` and `Every cited document re-hashes as recorded` having made no
+  request at all. A dry run now reports every entry as not checked and says in terms
+  that it establishes nothing about drift, and the workflow's offline selftest asserts
+  that the dry-run summary claims zero unchanged.
+
+  Run live against energy.ca.gov on 2026-09-07: **13 documents, 13 unchanged, 0
+  drifted, 0 could not be checked.** Every cited document still hashes as this
+  repository records it.
+
 - A findings table, for the spreadsheet the filing came out of.
   `check --format findings-csv` and `--format findings-jsonl` write one line per
   **row and finding** -- `row, column, rule_id, severity, cell, message` -- with

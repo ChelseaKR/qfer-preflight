@@ -1,0 +1,191 @@
+# Re-fetch every document in `docs/source-manifest.md` and open a review request when
+# one of them has changed.
+#
+# The README says the tool is wrong until updated when a published document changes, and
+# the manifest turns that into a procedure a person follows before each filing deadline.
+# This is that procedure on a schedule: shortly before the 15th of February, May, August
+# and November, which is the published QFER filing calendar.
+#
+# THE PULL REQUEST IS A REVIEW REQUEST, NOT AN UPDATE. It carries both digests and the
+# rules whose citations point into the changed document. It does not touch a quote, a
+# severity or the recorded digest, because `docs/source-manifest.md` says in terms that a
+# changed hash means a rule may be quoting superseded text and that deciding what that
+# means is a person's ADR. Nothing here merges anything.
+#
+# Two jobs, and the split is deliberate. `selftest` runs the script `--dry-run` with no
+# network at all and no write permission, so a change that breaks the watcher is caught
+# on the pull request that makes it rather than three months later on a cron. `watch`
+# does the fetching, and it is the only job that can open a pull request.
+name: source-watch
+
+on:
+  schedule:
+    # 07:00 UTC on the 8th of Feb, May, Aug and Nov: a week before each filing deadline,
+    # which leaves time for a person to read a diff rather than discover it on the day.
+    - cron: "0 7 8 2,5,8,11 *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/watch_sources.py"
+      - "tests/test_watch_sources.py"
+      - ".github/workflows/source-watch.yml"
+      - "docs/source-manifest.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Keyed so a pull request collapses onto itself while a scheduled run gets its own
+  # group. Two scheduled runs never overlap, and neither cancels the other.
+  group: source-watch-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: the watcher runs offline and its tests pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Install the locked dependency set
+        run: uv sync --locked
+
+      - name: The watcher's own tests
+        # `--no-cov` because the coverage floor is measured over the WHOLE package by
+        # `make verify` in ci.yml. Running one file under that floor fails at 16%
+        # coverage while every test in it passes -- a red job that says nothing about
+        # the watcher, which is exactly how a job gets ignored.
+        run: uv run pytest tests/test_watch_sources.py -q --no-cov
+
+      - name: Dry run, which must make no network call and claim nothing
+        # `shell: bash` because the default `run:` is `bash -e {0}` WITHOUT pipefail,
+        # so a failure on the left of a pipe would be invisible.
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/watch_sources.py --dry-run --json > summary.json
+          python3 - <<'PY'
+          import json, sys
+          summary = json.load(open("summary.json"))
+          counts = summary["counts"]
+          # A dry run that reported "unchanged" would be the exact defect this script
+          # exists to prevent, committed by the script itself. It did, once.
+          assert counts["unchanged"] == 0, f"a dry run claimed {counts['unchanged']} unchanged"
+          assert counts["not-checked"] == summary["documents"], counts
+          assert summary["every_document_was_fetched"] is False
+          assert summary["documents"] > 0, "an empty manifest is a broken watcher"
+          print(f"dry run OK: {summary['documents']} entries parsed, none claimed as checked")
+          PY
+
+  watch:
+    name: re-fetch the cited documents
+    # Never on a pull request: this one reaches the network and can open a PR.
+    if: github.event_name != 'pull_request'
+    needs: selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Install the locked dependency set
+        run: uv sync --locked
+
+      - name: Re-fetch every cited document
+        id: watch
+        shell: bash
+        run: |
+          set -uo pipefail
+          # The exit code IS the verdict and must not be swallowed: 0 every document
+          # fetched and unchanged, 1 drift, 2 at least one could not be checked. `-e`
+          # is deliberately off for this one command so 1 and 2 can be read and acted
+          # on rather than ending the step.
+          status=0
+          uv run python scripts/watch_sources.py --json > summary.json || status=$?
+          echo "status=${status}" >> "${GITHUB_OUTPUT}"
+          if [ ! -s summary.json ]; then
+            echo "::error::the watcher wrote no summary, so nothing was established"
+            exit 1
+          fi
+          {
+            echo "### source-watch"
+            echo ""
+            echo '```json'
+            python3 -c "import json; print(json.dumps(json.load(open('summary.json'))['counts'], indent=2))"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-watch-summary
+          path: summary.json
+          if-no-files-found: error
+
+      - name: Say plainly when a document could not be checked
+        if: steps.watch.outputs.status == '2'
+        shell: bash
+        run: |
+          echo "::error::At least one cited document could not be fetched. That is NOT" \
+               "a statement that the sources are unchanged; this run did not establish" \
+               "anything about drift. See the uploaded summary."
+          exit 1
+
+      - name: Open a review request for the drifted documents
+        if: steps.watch.outputs.status == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="source-drift/$(date -u +%Y-%m-%d)"
+          python3 - <<'PY' > body.md
+          import json
+          summary = json.load(open("summary.json"))
+          drifted = [r for r in summary["results"] if r["outcome"] == "drifted"]
+          print("A published document this project cites has changed.\n")
+          print("**Nothing here has been updated.** `docs/source-manifest.md` says why: a")
+          print("changed hash means a rule may be quoting superseded text, and deciding")
+          print("what that means is a person's ADR. This is a review request.\n")
+          for row in drifted:
+              print(f"### {row['title']}\n")
+              print(f"- url: {row['url']}")
+              print(f"- recorded sha256: `{row['recorded_sha256']}` (retrieved {row['retrieved']})")
+              print(f"- re-fetched sha256: `{row['observed_sha256']}`")
+              rules = ", ".join(row["rules"]) or "(no rule cites this document directly)"
+              print(f"- rules citing this document: {rules}\n")
+          print("Follow the procedure in `docs/source-manifest.md`: read both versions")
+          print("before touching a quote, a severity or the recorded digest.\n")
+          print("*Prepared with AI assistance; reviewed before submission.*")
+          PY
+          git switch -c "${branch}"
+          # The branch carries the summary and nothing else. It deliberately does NOT
+          # update the manifest: that is the decision the pull request is asking for.
+          mkdir -p docs/source-watch
+          cp summary.json "docs/source-watch/$(date -u +%Y-%m-%d).json"
+          git -c user.name="Chelsea Kelly-Reif" \
+              -c user.email="3114598+ChelseaKR@users.noreply.github.com" \
+              commit -m "chore(sources): a cited document has changed and needs a read" \
+              -- "docs/source-watch/$(date -u +%Y-%m-%d).json"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${branch}"
+          gh pr create --base main --head "${branch}" \
+            --title "A cited document has changed and needs a read" \
+            --body-file body.md
