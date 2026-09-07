@@ -1,0 +1,185 @@
+# Publish an already-released, signed tag to PyPI. Dispatched by the
+# maintainer, never on push, and never before `release.yml` has run for the
+# same tag.
+#
+# Why dispatch and not `push: tags:`. A `push: tags:` workflow runs the
+# definition stored *at the tagged ref*, so whoever can push a tag also
+# chooses what the release does. Dispatching from `main` keeps the release
+# authority on the reviewed branch and leaves the tag as data this workflow
+# checks.
+#
+# The job split is the same one `release.yml` uses. The job that reads
+# repository code holds only `contents: read`; the job that can publish never
+# checks the repository out and never holds a token with write access to it.
+# Publication is PyPI Trusted Publishing over OIDC, so there is no long-lived
+# API token in this repository's secrets and none is wanted.
+#
+# The PyPI side has to exist first, and only the project owner can create it.
+# On pypi.org, under "Your projects" -> "Publishing", or "Add a pending
+# publisher" while the project does not exist yet:
+#
+#   PyPI Project Name:  qfer-preflight
+#   Owner:              ChelseaKR
+#   Repository name:    qfer-preflight
+#   Workflow name:      publish-pypi.yml
+#   Environment name:   pypi
+#
+# Until that registration exists this workflow fails closed at the upload with
+# PyPI's own trusted-publisher error, and nothing is uploaded. Nothing here
+# runs on merge; the workflow is inert until it is dispatched with a tag.
+name: publish-pypi
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed release tag (vX.Y.Z) that release.yml has already published
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify the signed tag against trusted main
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      source_commit: ${{ steps.identity.outputs.source_commit }}
+    steps:
+      - name: Check out main with full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Establish tag identity from trusted main
+        id: identity
+        env:
+          TAG: ${{ inputs.tag }}
+          # Read-only: `gh release view` only needs to see that the release exists.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # Present is not the same as populated. A signer list holding only
+          # comments and blank lines would hand signature verification an
+          # empty principal list, and the failure would read like a bad
+          # signature rather than a missing key, so refuse before anything
+          # else runs. Same guard as release.yml, in the same position: first.
+          # tests/test_release_workflow.py executes it in a real shell and
+          # asserts nothing git-related precedes it.
+          grep -qv '^[[:space:]]*\(#\|$\)' .github/allowed_signers
+
+          test "${GITHUB_REF}" = refs/heads/main
+          test "$(git rev-parse origin/main)" = "${GITHUB_SHA}"
+
+          # A stable SemVer tag only. A pre-release or a build-metadata suffix
+          # is not something to put on the index from here.
+          printf '%s\n' "${TAG}" \
+            | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+
+          git fetch --tags --force origin
+
+          # An annotated or signed tag is a tag object. A lightweight tag
+          # points straight at a commit and carries no signature.
+          test "$(git cat-file -t "${TAG}")" = tag
+
+          git config gpg.ssh.allowedSignersFile .github/allowed_signers
+          git verify-tag "${TAG}"
+
+          # The tag must already be on main, so nothing reaches the index that
+          # did not go through the branch.
+          git merge-base --is-ancestor "${TAG}^{commit}" origin/main
+
+          # A tag that release.yml has not turned into a published GitHub
+          # release is not released, whatever its signature says.
+          gh release view "${TAG}" --json isDraft --jq '.isDraft' | grep -qx false
+
+          version="${TAG#v}"
+          git checkout --detach "${TAG}^{commit}"
+          project_version="$(uv run python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          test "${project_version}" = "${version}"
+          {
+            printf 'version=%s\n' "${version}"
+            printf 'source_commit=%s\n' "$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build the distribution at the tagged commit
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the verified release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.source_commit }}
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: false
+
+      - name: Build and confirm the artefacts carry the tag's version
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv build
+          ls dist
+          test -f "dist/qfer_preflight-${VERSION}.tar.gz"
+          test -f "dist/qfer_preflight-${VERSION}-py3-none-any.whl"
+          test "$(ls dist | wc -l)" -eq 2
+
+      - name: Upload the built distribution
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish to PyPI
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: pypi
+      url: https://pypi.org/project/qfer-preflight/${{ needs.verify.outputs.version }}/
+    permissions:
+      # The OIDC token for Trusted Publishing, and nothing else. No checkout,
+      # no `contents:` scope, no repository token: this job publishes the
+      # exact bytes the build job produced and can do nothing to the
+      # repository.
+      id-token: write
+    steps:
+      - name: Download the built distribution
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+          attestations: true

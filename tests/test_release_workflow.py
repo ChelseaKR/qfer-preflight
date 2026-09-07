@@ -15,6 +15,7 @@ unverifiable tag. See the "Releasing" section of CONTRIBUTING.md.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -30,16 +31,21 @@ GUARD = "grep -qv '^[[:space:]]*\\(#\\|$\\)' .github/allowed_signers"
 _RUN_BLOCK_INDENT = " " * 10
 
 
-def _run_block(step_name: str) -> str:
+def _run_block_of(workflow: str, step_name: str) -> str:
     """Return the shell script of the step whose name contains `step_name`."""
-    start = WORKFLOW.index(step_name)
-    body = WORKFLOW[WORKFLOW.index("run: |", start) :]
+    start = workflow.index(step_name)
+    body = workflow[workflow.index("run: |", start) :]
     lines: list[str] = []
     for line in body.splitlines()[1:]:
         if line.strip() and not line.startswith(_RUN_BLOCK_INDENT):
             break
         lines.append(line)
     return "\n".join(lines)
+
+
+def _run_block(step_name: str) -> str:
+    """`_run_block_of` against `release.yml`, which most of this file reads."""
+    return _run_block_of(WORKFLOW, step_name)
 
 
 VERIFY_SCRIPT = _run_block("Verify the tag object, its signature and its ancestry")
@@ -233,3 +239,118 @@ def test_contributing_documents_the_release_setup() -> None:
     assert ".github/allowed_signers" in contributing, (
         "where the signer list lives must be written down somewhere a human will look"
     )
+
+
+# ---------------------------------------------------------------------------
+# The publish path: dispatch-only, OIDC-only, and inert until it is dispatched
+# ---------------------------------------------------------------------------
+#
+# `release.yml` above makes a GitHub release and stops there. `publish-pypi.yml`
+# is the second half: it takes a tag that release.yml has already published,
+# re-verifies it against main, builds at that commit, and uploads over PyPI
+# Trusted Publishing. Everything below is a property where getting it wrong is
+# silent -- a stored token that nobody notices, a publish job that quietly
+# rebuilds what it uploads, a trigger that hands the release authority to
+# whoever can push a tag.
+
+PUBLISH_PATH = ROOT / ".github" / "workflows" / "publish-pypi.yml"
+PUBLISH = PUBLISH_PATH.read_text(encoding="utf-8")
+PUBLISH_IDENTITY = _run_block_of(PUBLISH, "Establish tag identity from trusted main")
+
+
+def test_publishing_is_dispatched_and_never_triggered_by_a_push() -> None:
+    """A `push: tags:` trigger runs the definition stored at the tagged ref.
+
+    Whoever can push a tag would then also be choosing what the publish does.
+    Dispatching from main keeps that authority on the reviewed branch.
+    """
+    assert "workflow_dispatch:" in PUBLISH
+    assert "\n  push:" not in PUBLISH
+    assert 'test "${GITHUB_REF}" = refs/heads/main' in PUBLISH_IDENTITY
+
+
+def test_no_pypi_token_is_stored_or_read_anywhere() -> None:
+    """Trusted Publishing exists so that no long-lived credential has to.
+
+    A `password:` input or a `secrets.PYPI_*` reference would mean a token is
+    sitting in this repository's secret store, which is the thing OIDC
+    replaces. `id-token: write` without `environment:` is also refused: the
+    environment name is half of what PyPI matches the OIDC claim against.
+    """
+    assert "PYPI_API_TOKEN" not in PUBLISH
+    assert "password:" not in PUBLISH
+    assert "secrets." not in PUBLISH
+    assert "id-token: write" in PUBLISH
+    assert "name: pypi" in PUBLISH
+
+
+def test_the_publish_job_holds_no_write_access_to_the_repository() -> None:
+    publish_job = PUBLISH[PUBLISH.index("  publish:") :]
+    assert "actions/checkout" not in publish_job, (
+        "the job that can upload must never check out content it could publish"
+    )
+    assert "contents: write" not in PUBLISH
+    assert "id-token: write" in publish_job
+
+
+def test_the_uploaded_bytes_are_the_bytes_the_build_job_built() -> None:
+    """A rebuild in the publish job is a different artifact than the one verified."""
+    publish_job = PUBLISH[PUBLISH.index("  publish:") :]
+    assert "download-artifact" in publish_job
+    assert "uv build" not in publish_job
+
+
+def test_the_publish_path_verifies_the_signature_before_anything_else() -> None:
+    """The same guard as release.yml, in the same position: first."""
+    assert GUARD in PUBLISH_IDENTITY
+    for later in ("git fetch", "git cat-file", "git verify-tag", "git merge-base"):
+        assert later in PUBLISH_IDENTITY
+        assert PUBLISH_IDENTITY.index(GUARD) < PUBLISH_IDENTITY.index(later), (
+            f"{later!r} runs before the allowed_signers guard in publish-pypi.yml"
+        )
+    assert "set -euo pipefail" in PUBLISH_IDENTITY
+
+
+def test_only_a_stable_semver_tag_that_is_already_released_may_be_published() -> None:
+    """A pre-release tag, or one release.yml never published, is not a release.
+
+    PyPI is not revocable in any useful sense: an upload can be yanked, never
+    unmade. So the tag has to be one that already survived release.yml.
+    """
+    assert "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" in PUBLISH_IDENTITY
+    assert "gh release view" in PUBLISH_IDENTITY
+    assert "isDraft" in PUBLISH_IDENTITY
+
+
+def test_the_built_artifacts_must_carry_the_tags_own_version() -> None:
+    build = _run_block_of(PUBLISH, "Build and confirm the artefacts carry the tag's version")
+    assert 'test -f "dist/qfer_preflight-${VERSION}.tar.gz"' in build
+    assert 'test -f "dist/qfer_preflight-${VERSION}-py3-none-any.whl"' in build
+    assert 'test "$(ls dist | wc -l)" -eq 2' in build, (
+        "an extra file in dist/ would be uploaded too, unexamined"
+    )
+
+
+def test_every_action_in_the_publish_workflow_is_pinned_to_a_commit() -> None:
+    """A moving tag is somebody else deciding what runs in a job that can publish."""
+    unpinned = [
+        line.strip()
+        for line in PUBLISH.splitlines()
+        if line.strip().startswith("uses:")
+        and not re.match(r"^uses:\s+[^@]+@[0-9a-f]{40}\b", line.strip())
+    ]
+    assert not unpinned, f"unpinned action references in publish-pypi.yml: {unpinned}"
+
+
+def test_the_workflow_records_the_registration_only_the_owner_can_make() -> None:
+    """Trusted Publishing needs a web-UI registration no automation can do.
+
+    The five values PyPI's form asks for are written into the workflow header,
+    because a job that fails closed with a trusted-publisher error and no
+    instructions is a job nobody can act on. `workflow_name` in particular is
+    the filename, and getting it wrong is a failure that reads as a
+    permissions problem.
+    """
+    header = PUBLISH[: PUBLISH.index("name: publish-pypi")]
+    for value in ("qfer-preflight", "ChelseaKR", "publish-pypi.yml", "pypi"):
+        assert value in header, f"the header does not record {value!r} for the registration"
