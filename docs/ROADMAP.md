@@ -28,7 +28,7 @@ After 0.1.0:
 - Zero runtime dependencies. The validator runs on the standard library alone.
 - One gate, `make verify`: format, lint, type check, bandit, tests with a 90
   percent coverage floor, and the dash check.
-- Ten ADRs recording the decisions that constrain everything else.
+- Eleven ADRs recording the decisions that constrain everything else.
 
 ## How anything gets into this project
 
@@ -358,7 +358,7 @@ Intake checklist per new profile, each step leaving an artefact:
   (data due by the 15th of February, May, August and November): re-download
   the manifest documents shortly before each, compare hashes, and treat any
   drift as a priority fix with a changelog entry saying which revision changed.
-- Keep writing ADRs at the same density. The ten that exist are why the
+- Keep writing ADRs at the same density. The eleven that exist are why the
   guardrails are load-bearing rather than decorative. Anything in this roadmap
   that changes an output contract, a channel, or a severity decision gets the
   next number.

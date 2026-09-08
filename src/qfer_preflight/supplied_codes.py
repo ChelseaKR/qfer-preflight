@@ -22,7 +22,7 @@ set comes from the person who holds it, the finding names the file's SHA-256 so
 they can tell which list produced it, and the report says in words that it was
 evaluated against a caller-supplied list rather than a published one.
 
-ADR 0010 is the record of why that is not the thing ADR 0009 refused. In short:
+ADR 0011 is the record of why that is not the thing ADR 0009 refused. In short:
 ADR 0009 refused to ground a *finding* in private correspondence, because a
 reader of the report cannot open the correspondence and so cannot tell a
 grounded claim from an invented one. Here the ground is a file the reader

@@ -89,7 +89,8 @@ Practically:
   this project can retrieve, and the Commission has said it does not plan to
   publish it. A code can be exactly six characters, pass QP017, and still be
   rejected on upload. If you have the data dictionary from your portal app
-  landing page, that is where the list lives.
+  landing page, that is where the list lives, and you can hand the list to this
+  tool yourself: see "Checking NAICS codes against your own list" below.
 - **QP032**, repeated reporting keys. No published document says which columns
   make a row unique, and the Commission's own worked example contains two rows
   that differ only in their amounts, so legitimate repeats exist.
@@ -419,6 +420,59 @@ reason, rather than being skipped.
 `--format json` produces a batch envelope, one embedded report per input,
 conforming to `docs/schemas/report-batch-v1.schema.json`. `--format sarif` is
 available for CI surfaces that read it.
+
+## Checking NAICS codes against your own list
+
+QP018 is unevaluated because this project has no copy of the Commission's
+"Valid NAICS codes" list and will never ship one. You may have a copy. It is in
+the data dictionary posted on the portal app landing pages, and Commission staff
+will send it on request.
+
+If you do, write the codes into a plain text file, one per line, and pass it:
+
+```sh
+uv run qfer-preflight check filing.csv --naics-list my-naics-codes.txt
+```
+
+The file is read from your disk and nowhere else. Nothing is uploaded, nothing
+is cached, and no copy of your list is written into the report.
+
+A list looks like this. These codes are synthetic:
+
+```
+221118
+221122
+RE1100
+925190
+```
+
+Every line must be exactly six characters once its line ending is removed.
+Nothing is trimmed or corrected, and a file that breaks the rule is refused
+rather than partly read:
+
+- a blank line, a header row, a comment, or a trailing space on any line;
+- a byte order mark, which some editors add on save;
+- anything that is not UTF-8 text;
+- a file that is empty or cannot be opened.
+
+A refused list does not stop the run. Every other rule still reports, and QP018
+still reports as not evaluated, with the refusal as its reason and the same
+sentence on standard error. That is deliberate: a code list read wrong is worse
+than no code list, because one stray space turns a valid code into one that
+matches nothing and the error would name a correct filing as wrong.
+
+**What the report then says.** Findings under QP018 name your file's path and
+its SHA-256, and the report's header block says the rule was evaluated against a
+caller-supplied list rather than a published one. The `--format json` report
+carries the same thing under `code_lists`. Your codes are never written into the
+report: this tool does not republish a list it was handed, so hints count rather
+than quote.
+
+**What it does not mean.** A filing with no QP018 findings has matched the list
+you supplied. This tool cannot check that your list is the Commission's, is
+current, or is complete, and it does not claim to. `qfer-preflight rules` still
+prints QP018 as not implemented, because the registry describes what this tool
+ships and it ships no code list.
 
 ## Running it in CI
 

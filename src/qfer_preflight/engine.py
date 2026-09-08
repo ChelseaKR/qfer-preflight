@@ -106,7 +106,7 @@ _RULE_COLUMN_ROLES: dict[str, str] = {
     # QP018 reads the same column, and reads it only when a caller supplied the
     # list it needs. It is registered unimplemented, so it has no ledger slot on
     # an ordinary run; `grounded` below is what puts one there for a run that
-    # has the list. See `supplied_codes` and ADR 0010.
+    # has the list. See `supplied_codes` and ADR 0011.
     "QP018": "naics_column",
     "QP021": "company_number_column",
     "QP022": "udc_column",
