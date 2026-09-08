@@ -124,12 +124,17 @@ def test_the_schema_file_states_its_minor_revision_as_a_literal() -> None:
     places rather than a number that drifts in one.
     """
     schema = json.loads(SCHEMA_V1.read_text(encoding="utf-8"))
-    assert schema["minorVersion"] == 1
+    assert schema["minorVersion"] == 2
     history = schema["minorVersionHistory"]
-    assert [entry.split(":")[0] for entry in history] == ["1.0", "1.1"]
-    assert "evaluation" in history[-1], (
+    assert [entry.split(":")[0] for entry in history] == ["1.0", "1.1", "1.2"]
+    assert "evaluation" in history[1], (
         "minor revision 1.1 is the one that added the evaluation ledger, and "
         "the history entry has to name what it added or it records nothing"
+    )
+    assert "code_lists" in history[2], (
+        "minor revision 1.2 is the one that added the caller-supplied code list "
+        "record, and the history entry has to name what it added or it records "
+        "nothing"
     )
 
 

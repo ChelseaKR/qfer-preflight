@@ -699,6 +699,30 @@ def _ledger_section(report: Report) -> list[str]:
     return lines
 
 
+def _code_list_section(report: Report) -> list[str]:
+    """Say, in the header block, that a rule rested on a list this tool never saw.
+
+    A reader of this report is not necessarily the person who ran it. Every
+    other rule here cites a document that reader can open; QP018, on a run given
+    `--naics-list`, cites a file only the caller has. That difference belongs
+    where it cannot be missed, not folded into a finding a clean filing never
+    prints.
+    """
+    supplied = report.naics_list
+    if supplied is None:
+        return []
+    return [
+        "QP018 was evaluated against a caller-supplied NAICS code list, not a published one.",
+        f"  list   : {supplied.path}",
+        f"  sha256 : {supplied.sha256}",
+        f"  codes  : {len(supplied.codes):,} distinct, on {supplied.lines:,} lines",
+        "  This tool publishes no NAICS code list and fetched nothing. It cannot check that",
+        "  the list above is the Commission's, and it does not claim to. Every QP018 finding",
+        "  below rests on that file and on nothing else.",
+        "",
+    ]
+
+
 def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str:
     """Human readable rendering."""
     lines: list[str] = []
@@ -709,6 +733,7 @@ def to_text(report: Report, rules_by_id: dict[str, object] | None = None) -> str
     lines.append(f"rows    : {report.rows_read}")
     lines.append(f"status  : {report.status.value.upper()}")
     lines.append("")
+    lines.extend(_code_list_section(report))
     lines.extend(_findings_section(report))
 
     if report.advisories:

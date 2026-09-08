@@ -56,6 +56,7 @@ from .describe import (
 from .model import Advisory, Finding, LedgerEntry, NotEvaluated, Report, Severity
 from .profiles import Profile
 from .rules import RULE_SPECS, RuleSpec, specs_for
+from .supplied_codes import NaicsListOffer, SuppliedNaicsList
 
 TOOL_NAME = "qfer-preflight"
 
@@ -102,6 +103,11 @@ _RULE_COLUMN_ROLES: dict[str, str] = {
     "QP015": "customer_group_column",
     "QP016": "rate_code_column",
     "QP017": "naics_column",
+    # QP018 reads the same column, and reads it only when a caller supplied the
+    # list it needs. It is registered unimplemented, so it has no ledger slot on
+    # an ordinary run; `grounded` below is what puts one there for a run that
+    # has the list. See `supplied_codes` and ADR 0010.
+    "QP018": "naics_column",
     "QP021": "company_number_column",
     "QP022": "udc_column",
     "QP023": "naics_column",
@@ -151,7 +157,9 @@ def _ledger_columns(profile: Profile, rule_id: str) -> tuple[str, ...]:
     return () if column is None else (column,)
 
 
-def _ledger_slots(profile: Profile) -> tuple[tuple[str, str | None, str, bool], ...]:
+def _ledger_slots(
+    profile: Profile, grounded: frozenset[str] = frozenset()
+) -> tuple[tuple[str, str | None, str, bool], ...]:
     """Every (rule, column) pair the ledger reports for this form.
 
     The last element of each slot says whether the rule binds to the form. A
@@ -173,7 +181,7 @@ def _ledger_slots(profile: Profile) -> tuple[tuple[str, str | None, str, bool], 
     bound = {spec.id for spec in specs_for(profile)}
     slots: list[tuple[str, str | None, str, bool]] = []
     for spec in RULE_SPECS:
-        if not spec.implemented:
+        if not spec.implemented and spec.id not in grounded:
             # Registered, published and permanently unevaluated. It reads no
             # row on any file, so a row count for it would be a count of
             # nothing rather than a measurement. `rules_not_evaluated` carries
@@ -318,9 +326,15 @@ class _Collector:
         specs: Sequence[RuleSpec],
         profile: Profile | None = None,
         sink: FindingSink | None = None,
+        naics: NaicsListOffer | None = None,
     ) -> None:
         self._specs = {spec.id: spec for spec in specs}
         self._profile = profile
+        # What the caller offered for QP018, if anything: an accepted list, a
+        # refusal, or nothing at all. Three states kept apart all the way to the
+        # report, because "no list" and "a list I would not read" are different
+        # answers to why membership was not checked.
+        self._naics = naics
         # The ungrouped view. `_groups` below merges an identical finding across
         # rows so that 400,000 bad counties cost one object, which is right for a
         # report and wrong for a spreadsheet: a filer fixing those rows needs a
@@ -363,9 +377,34 @@ class _Collector:
         spec = self._specs.get(rule_id)
         return spec is not None and spec.implemented
 
+    @property
+    def grounded(self) -> frozenset[str]:
+        """Rules registered unimplemented for which this run has the missing material.
+
+        A rule is unimplemented in the registry because the document it needs is
+        not published, which is a fact about the world and not about a run. When
+        a caller supplies that material themselves, the rule can be evaluated on
+        that run and on no other. Everything downstream that filters on
+        `spec.implemented` -- the ledger slots, the header-block list, the
+        unimplemented registration -- has to consult this too, or the rule ends
+        up evaluated and missing from the ledger, or blocked and in neither
+        output list, which `_refuse_contradictions` refuses outright.
+        """
+        if self._naics is not None and self._naics.accepted is not None:
+            return frozenset({"QP018"})
+        return frozenset()
+
+    @property
+    def naics_list(self) -> SuppliedNaicsList | None:
+        """The accepted caller-supplied NAICS list, if this run has one."""
+        return self._naics.accepted if self._naics is not None else None
+
     def mark_evaluated(self, *rule_ids: str) -> None:
+        grounded = self.grounded
         for rule_id in rule_ids:
-            if rule_id in self._specs and self._specs[rule_id].implemented:
+            if rule_id not in self._specs:
+                continue
+            if self._specs[rule_id].implemented or rule_id in grounded:
                 self._evaluated.add(rule_id)
 
     def mark_not_evaluated(self, rule_id: str, reason: str) -> None:
@@ -392,11 +431,19 @@ class _Collector:
     ) -> None:
         """Report a finding, merging it with an identical one already held."""
         spec = self._specs[rule_id]
-        if not spec.implemented:
+        if not spec.implemented and rule_id not in self.grounded:
             # A report cannot both assert a violation of a rule and list that
             # rule as never applied. Registering a rule as unimplemented is a
-            # statement that no deterministic test for it exists, so a finding
-            # citing one would be an assertion the registry contradicts.
+            # statement that no deterministic test for it exists *in anything
+            # this project can cite*, so a finding citing one would be an
+            # assertion the registry contradicts.
+            #
+            # `grounded` is the one exception, and it is narrow: the caller has
+            # handed in the material the registry says is unpublished, for this
+            # run only. The finding then cites that file, by path and digest,
+            # and the report says in its header that it did. The registry is
+            # unchanged and `rules` still prints QP018 as not implemented,
+            # because the registry describes what this tool ships.
             raise ValueError(
                 f"rule {rule_id} is registered as unimplemented and reported as "
                 "not evaluated, so it cannot also produce a finding"
@@ -538,7 +585,7 @@ class _Collector:
             raise ValueError("a ledger cannot be built without the profile whose columns it maps")
         entries = [
             self._entry(rule_id, column, subject, bound)
-            for rule_id, column, subject, bound in _ledger_slots(self._profile)
+            for rule_id, column, subject, bound in _ledger_slots(self._profile, self.grounded)
         ]
         self._refuse_unmapped_counters({(entry.rule_id, entry.column or "") for entry in entries})
         return entries
@@ -600,16 +647,26 @@ class _Collector:
         return row == self._cells_row and column in self._cells
 
     def register_unimplemented(self) -> None:
+        grounded = self.grounded
         for spec in self._specs.values():
-            if not spec.implemented:
-                if spec.unimplemented_reason is None:  # pragma: no cover
-                    raise ValueError(f"rule {spec.id} is unimplemented but states no reason")
-                self._not_evaluated[spec.id] = spec.unimplemented_reason
+            if spec.implemented or spec.id in grounded:
+                continue
+            if spec.unimplemented_reason is None:  # pragma: no cover
+                raise ValueError(f"rule {spec.id} is unimplemented but states no reason")
+            self._not_evaluated[spec.id] = spec.unimplemented_reason
+        # A list that was offered and refused replaces the registry's reason
+        # rather than sitting silently beside it. The registry's reason says the
+        # list is published nowhere, which is true and is not what happened on
+        # this run: a caller supplied one and it was not readable as a code list.
+        # A reader given the first sentence would never learn about the second.
+        if self._naics is not None and self._naics.refusal is not None and "QP018" in self._specs:
+            self._not_evaluated["QP018"] = self._naics.refusal
 
     def block_all_except(self, keep: Iterable[str], reason: str) -> None:
         kept = set(keep)
+        grounded = self.grounded
         for spec in self._specs.values():
-            if spec.id in kept or not spec.implemented:
+            if spec.id in kept or (not spec.implemented and spec.id not in grounded):
                 continue
             self.mark_not_evaluated(spec.id, reason)
 
@@ -1322,22 +1379,88 @@ def _naics_hint(value: str) -> str:
     return f" The nearest published {label} {listing}."
 
 
+def _supplied_list_hint(value: str, supplied: SuppliedNaicsList) -> str:
+    """Point at what would have matched, without printing anybody else's list.
+
+    The report is a document a filer forwards, and the list behind it is one the
+    Commission declined to publish. So this names no code from the list. It
+    names a transform of the filing's own value, which is already in the report,
+    and otherwise it counts.
+    """
+    for label, candidate in (
+        ("without its surrounding whitespace", value.strip()),
+        ("upper-cased", value.strip().upper()),
+        ("padded to six characters with a leading zero", value.strip().rjust(6, "0")),
+    ):
+        if candidate != value and candidate in supplied.codes:
+            return f" The same value {label} is on the supplied list."
+    prefix = value.strip()[:4]
+    if len(prefix) == 4:
+        near = sum(1 for code in supplied.codes if code.startswith(prefix))
+        if near:
+            plural = "" if near == 1 else "s"
+            return (
+                f" The supplied list holds {near} code{plural} beginning {prefix}, "
+                "which are not named here because this tool does not republish a "
+                "list it was handed."
+            )
+    return ""
+
+
 def _check_naics(collector: _Collector, column: str, value: str, row_number: int) -> None:
+    supplied = collector.naics_list
     collector.judged("QP017", column)
     if len(value) != 6:
+        # The closing sentence is written twice on purpose rather than assembled
+        # from a fragment. It states what happened to QP018 on this run, and a
+        # run given a list is a run where "reported as not evaluated" is false.
+        # A sentence about another rule's outcome goes stale the moment that
+        # outcome can vary, and nothing but this branch would have said so.
+        naics_outcome = (
+            "whether the code is on the supplied list is reported under QP018, "
+            "which could not judge a value of the wrong length"
+            if supplied is not None
+            else "whether the code is on the Commission's list of valid NAICS "
+            "codes is reported as not evaluated under QP018"
+        )
         collector.add(
             "QP017",
             (
                 f"{column} value {show(value)} is {len(value)} characters long. "
                 "The code must be exactly 6 characters and should describe the "
                 "primary activity at the location where the energy was "
-                "consumed. This tool checks the length only; whether the code "
-                "is on the Commission's list of valid NAICS codes is reported "
-                f"as not evaluated under QP018.{cell_note(value)}"
+                f"consumed. This tool checks the length only; {naics_outcome}."
+                f"{cell_note(value)}"
             ),
             row=row_number,
             column=column,
         )
+    if supplied is not None:
+        if len(value) != 6:
+            # Not judged and not exempt. Every code on the list is six characters
+            # -- the loader refuses one that is not -- so a value of another
+            # length is definitively absent from it, and reporting that as a
+            # second error would tell a filer their code is off the list while
+            # they are already being told to replace it. QP017 stopped this row,
+            # and the ledger says which rule did.
+            collector.blocked("QP018", column, "QP017")
+        else:
+            collector.judged("QP018", column)
+            if value not in supplied.codes:
+                collector.add(
+                    "QP018",
+                    (
+                        f"{column} value {show(value)} is not on the NAICS code "
+                        f"list supplied at {supplied.path} (sha256 "
+                        f"{supplied.sha256}), which holds {len(supplied.codes):,} "
+                        "codes. This tool publishes no such list and fetched "
+                        "nothing: this finding rests on that file and on nothing "
+                        f"else.{_supplied_list_hint(value, supplied)}"
+                        f"{cell_note(value)}"
+                    ),
+                    row=row_number,
+                    column=column,
+                )
     # QP023's published text is the "Residential CEC Custom Classification
     # Codes" table, which is about codes of that shape. A plain six-digit NAICS
     # code is not one, so the rule reaches no verdict on it. Written as two
@@ -1711,8 +1834,14 @@ def _cross_row_checks(collector: _Collector, seen: dict[str, set[str]]) -> None:
         )
 
 
-def _column_dependent_rule_ids(specs: Sequence[RuleSpec]) -> list[str]:
-    return [spec.id for spec in specs if spec.implemented and spec.id not in _HEADER_INDEPENDENT]
+def _column_dependent_rule_ids(
+    specs: Sequence[RuleSpec], grounded: frozenset[str] = frozenset()
+) -> list[str]:
+    return [
+        spec.id
+        for spec in specs
+        if (spec.implemented or spec.id in grounded) and spec.id not in _HEADER_INDEPENDENT
+    ]
 
 
 def _next_row(rows: Iterator[list[str]]) -> list[str] | None:
@@ -1724,11 +1853,13 @@ def _next_row(rows: Iterator[list[str]]) -> list[str] | None:
         raise _CsvParseFailure(str(exc)) from exc
 
 
-def _column_ledger_slots(profile: Profile) -> tuple[tuple[str, str], ...]:
+def _column_ledger_slots(
+    profile: Profile, grounded: frozenset[str] = frozenset()
+) -> tuple[tuple[str, str], ...]:
     """Every rule and column this form counts a verdict for, once per data row."""
     return tuple(
         (rule_id, column)
-        for rule_id, column, _subject, _bound in _ledger_slots(profile)
+        for rule_id, column, _subject, _bound in _ledger_slots(profile, grounded)
         if column is not None
     )
 
@@ -1757,7 +1888,7 @@ def _scan_rows(
     seen: dict[str, set[str]] = {"months": set(), "years": set()}
     # Fixed before the first row is read, so the per-row bookkeeping below is a
     # walk over a tuple whose length is the profile's, not the filing's.
-    column_slots = _column_ledger_slots(profile)
+    column_slots = _column_ledger_slots(profile, collector.grounded)
     repeated_header = ("QP007",) if collector.has_rule("QP007") else ()
     data_rows = 0
     offset = 1
@@ -1841,7 +1972,7 @@ def _read_and_scan(
         # blocker says what happened.
         _note_blocked_by(collector, profile, _HEADER_INDEPENDENT, "QP002")
     else:
-        collector.mark_evaluated(*_column_dependent_rule_ids(specs))
+        collector.mark_evaluated(*_column_dependent_rule_ids(specs, collector.grounded))
 
     collector.mark_evaluated("QP003", "QP004", "QP006")
     collector.judged("QP006")
@@ -1902,7 +2033,7 @@ def _note_blocked_by(
     judged nothing, which is the case this whole ledger was written for.
     """
     kept = set(keep)
-    for rule_id, column, _subject, bound in _ledger_slots(profile):
+    for rule_id, column, _subject, bound in _ledger_slots(profile, collector.grounded):
         if rule_id in kept or not bound:
             continue
         collector.note_blocker(rule_id, column, blocker)
@@ -1948,6 +2079,7 @@ def _validate_ingest(
     input_name: str,
     reopen: Callable[[], io.BufferedIOBase],
     sink: FindingSink | None = None,
+    naics: NaicsListOffer | None = None,
 ) -> Report:
     """Drive the fail-closed decision tree from what one pass observed.
 
@@ -1959,7 +2091,7 @@ def _validate_ingest(
     that memory does not grow with the filing.
     """
     specs = specs_for(profile)
-    collector = _Collector(specs, profile, sink=sink)
+    collector = _Collector(specs, profile, sink=sink, naics=naics)
     collector.register_unimplemented()
 
     report = Report(
@@ -1969,6 +2101,7 @@ def _validate_ingest(
         profile_title=profile.title,
         input_name=input_name,
         input_sha256=ingest.sha256,
+        naics_list=collector.naics_list,
     )
 
     collector.mark_evaluated("QP001")
@@ -2033,7 +2166,11 @@ def _validate_ingest(
 
 
 def validate_bytes(
-    data: bytes, profile: Profile, input_name: str, sink: FindingSink | None = None
+    data: bytes,
+    profile: Profile,
+    input_name: str,
+    sink: FindingSink | None = None,
+    naics: NaicsListOffer | None = None,
 ) -> Report:
     """Validate one submission held in memory.
 
@@ -2049,10 +2186,16 @@ def validate_bytes(
         input_name,
         lambda: io.BytesIO(data),
         sink,
+        naics,
     )
 
 
-def validate_path(path: str, profile: Profile, sink: FindingSink | None = None) -> Report:
+def validate_path(
+    path: str,
+    profile: Profile,
+    sink: FindingSink | None = None,
+    naics: NaicsListOffer | None = None,
+) -> Report:
     """Validate a submission on disk.
 
     Two passes, each bounded: this one collects the file-level facts without
@@ -2066,7 +2209,7 @@ def validate_path(path: str, profile: Profile, sink: FindingSink | None = None) 
     def reopen() -> io.BufferedIOBase:
         return open(path, "rb")
 
-    return _validate_ingest(ingest, profile, os.path.basename(path), reopen, sink)
+    return _validate_ingest(ingest, profile, os.path.basename(path), reopen, sink, naics)
 
 
 def _parse_failure(
