@@ -176,3 +176,12 @@ Do not weaken it without an ADR. Specifically: never make a rule report as
 passed when it did not run, and never let a structurally broken document
 produce the same report as a clean one. `tests/test_fail_closed.py` guards
 this and should be treated as load-bearing.
+
+## Commercial solicitation
+
+Issues here are not open to bids. They are design records, written so a decision is
+reconstructable later, rather than scope documents for outside quoting. Unsolicited offers to
+implement one for a fee will be declined.
+
+Contributions through the normal fork-and-PR process are welcome, and `good first issue` is the
+place to start.
