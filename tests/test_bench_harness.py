@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "bench_large_file.py"
 
@@ -68,6 +70,30 @@ def test_a_reading_from_this_process_is_a_plausible_figure() -> None:
     The interpreter plus the test suite is never under 1 MiB, and the 1024x
     error puts an ordinary run below that, so this fails on the wrong unit
     without pinning a number that depends on the machine.
+
+    On a platform with no `getrusage(2)` the reading is `None` -- an absence,
+    not a zero -- and the assertion is that it says so rather than producing
+    a figure. Skipping instead would leave the Windows leg reporting a pass
+    over a function it never called.
     """
     reading = BENCH.peak_rss_mib()
+    if BENCH.resource is None:
+        assert reading is None, (
+            f"the platform has no getrusage(2) but peak_rss_mib returned a number: {reading!r}"
+        )
+        return
+    assert reading is not None
     assert 1.0 < reading < 100_000.0, reading
+
+
+def test_an_unmeasurable_peak_is_absent_rather_than_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discriminates on every platform, including the ones that can measure.
+
+    Without this the Unix legs never execute the branch that matters, and the
+    only evidence that a missing `resource` produces an absence rather than a
+    `0.0` would be the Windows job.
+    """
+    monkeypatch.setattr(BENCH, "resource", None)
+    assert BENCH.peak_rss_mib() is None

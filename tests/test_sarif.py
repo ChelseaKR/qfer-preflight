@@ -121,7 +121,11 @@ def test_merged_findings_become_one_result_that_names_its_rows(
     header = ",".join(PROFILES["CEC-1306A-S1"].header)
     row = "123,2025,3,007,D,RESIDENTIAL_OTHER,925190,10,1000.50,25"
     target = tmp_path / "merged.csv"
-    target.write_text(f"{header}\r\n{row}\r\n{row}\r\n", encoding="utf-8")
+    # write_bytes, not write_text: a text handle opened with newline=None
+    # translates every "\n" to os.linesep, so on Windows this fixture became
+    # "\r\r\n"-terminated and the reader counted five lines where the test
+    # means three. The bytes are the input under test here.
+    target.write_bytes(f"{header}\r\n{row}\r\n{row}\r\n".encode())
 
     payload = _run(["check", str(target), "--format", "sarif"], capsys)
     run = payload["runs"][0]
@@ -143,7 +147,7 @@ def test_advisories_stay_unseverityed_and_uncited_in_sarif(
     header = ",".join(PROFILES["CEC-1306A-S1"].header)
     row = "123,2025,3,14,B,RESIDENTIAL_OTHER,925190,10,1000.50,25"
     target = tmp_path / "bom.csv"
-    target.write_text("\ufeff" + f"{header}\r\n{row}\r\n", encoding="utf-8")
+    target.write_bytes(("\ufeff" + f"{header}\r\n{row}\r\n").encode())
 
     payload = _run(["check", str(target), "--format", "sarif"], capsys)
     run = payload["runs"][0]

@@ -55,3 +55,75 @@ jobs:
 
       - name: Run the full gate
         run: make verify
+
+  # A second platform, and it is here for one measured reason rather than for
+  # completeness. The package is pure Python, so the lint, typecheck and
+  # security stages cannot differ by operating system and are deliberately not
+  # repeated. What can differ is **byte-level file behaviour**, and this tool
+  # writes files a filer opens in Excel.
+  #
+  # The examinable surface is small and was counted rather than assumed. Every
+  # IO call site in `src/qfer_preflight` is one of:
+  #   * a binary read (`engine.py`, `detect.py`) -- platform-independent;
+  #   * a text read with an explicit encoding (`diff.py`) -- and reading is the
+  #     safe direction, since universal-newline translation on read normalises
+  #     CRLF to LF, which is what the readers want anyway;
+  #   * exactly **one text write**, `findings_table.write_table`.
+  # So the domain this leg exists to cover is one write site of one, and it
+  # covers it. That is the honest scope; it is not "the suite now runs on
+  # Windows too" in any sense that implies more.
+  #
+  # `test_a_written_table_carries_only_the_terminator_the_renderer_chose` is
+  # the assertion that only discriminates here: `os.linesep` is "\n" on Linux
+  # and macOS, so on the other two legs it passes whether or not the bug is
+  # present. A green run there was never evidence; a green run here is.
+  #
+  # This is a separate job rather than an `os:` dimension on `verify` on
+  # purpose. The matrix job's display name interpolates only the Python
+  # version, so adding an OS axis would produce two jobs called "Verify on
+  # Python 3.13" and make the name a required-status-check cannot resolve.
+  windows:
+    name: Byte behaviour on Windows
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Pin the Python version
+        run: uv python install 3.13
+
+      - name: Install the locked dependency set
+        run: uv sync --locked
+
+      # GNU Make is not on the Windows image. Every gate in this repository is
+      # a make target so that a contributor can run it (tests/test_gate_parity),
+      # and that rule is worth more than the convenience of calling pytest
+      # directly here.
+      - name: Install GNU Make
+        run: choco install make --no-progress -y
+
+      # The CSV fixtures are inputs whose exact bytes the assertions read, and
+      # `.gitattributes` marks them `-text` so nothing translates them on
+      # checkout. If that ever stops applying, this job would measure its own
+      # checkout -- and it would do so by *passing*, because the fixtures would
+      # arrive carrying the CRLF the assertions hunt for. Checked, not trusted.
+      - name: Check the fixtures were checked out verbatim
+        shell: bash
+        run: make fixtures-verbatim
+
+      # Only the test stage. Lint, typecheck and the security scan cannot
+      # differ by operating system on a pure-Python package, and repeating them
+      # would spend a runner to learn nothing.
+      - name: Run the tests
+        shell: bash
+        run: make test

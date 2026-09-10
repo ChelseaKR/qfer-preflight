@@ -287,10 +287,20 @@ def test_file_level_findings_sort_before_row_findings() -> None:
 
 
 def _cli(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the CLI and decode its output as UTF-8, not as the locale.
+
+    `text=True` alone decodes with the locale encoding, which on Windows is
+    the console code page. The table is UTF-8 by construction and
+    `--findings-bom` puts a U+FEFF at the front of it, so a locale decode
+    turns those three bytes into `ï»¿` and the assertion below fails on the
+    one platform the flag exists for. Naming the encoding makes the test read
+    what the tool writes.
+    """
     return subprocess.run(
         [sys.executable, "-m", "qfer_preflight", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -305,11 +315,22 @@ def test_the_cli_writes_the_table_and_keeps_the_exit_code() -> None:
 
 
 def test_the_byte_order_mark_is_off_unless_asked_for() -> None:
+    """And the run must not fall over emitting it.
+
+    On Windows `sys.stdout` encodes with the console code page, and cp1252
+    has no U+FEFF: before `_write_stdout`, this exact command raised
+    `UnicodeEncodeError` and printed nothing. Asserting the exit code as well
+    as the prefix is what tells a crash apart from a missing mark.
+    """
     clean = str(FIXTURES / "1306a_s1_clean.csv")
-    assert not _cli(["check", clean, "--format", "findings-csv"]).stdout.startswith("﻿")
-    assert _cli(["check", clean, "--format", "findings-csv", "--findings-bom"]).stdout.startswith(
-        "﻿"
+    without = _cli(["check", clean, "--format", "findings-csv"])
+    with_mark = _cli(["check", clean, "--format", "findings-csv", "--findings-bom"])
+    assert without.returncode == with_mark.returncode, (
+        "asking for a byte order mark changed the verdict; on Windows this was "
+        f"an encoding crash: {with_mark.stderr[-300:]}"
     )
+    assert not without.stdout.startswith("﻿")
+    assert with_mark.stdout.startswith("﻿"), with_mark.stderr[-300:]
 
 
 def test_a_batch_refuses_to_concatenate_tables_across_inputs() -> None:
