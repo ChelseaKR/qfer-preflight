@@ -31,6 +31,7 @@ from .findings_table import (
     TableHeader,
     render_findings_csv,
     render_findings_jsonl,
+    write_table,
 )
 from .model import BatchEntry, Report, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
@@ -482,9 +483,9 @@ def _check_batch_findings(
             continue
         destination = directory / f"{Path(entry.input_name).stem}.findings.{suffix}"
         try:
-            destination.write_text(
+            write_table(
+                destination,
                 _findings_output(entry, collected, args.format, byte_order_mark=args.findings_bom),
-                encoding="utf-8",
             )
         except OSError as exc:
             print(f"could not write {destination}: {exc}", file=sys.stderr)
