@@ -104,6 +104,67 @@ def test_the_writer_and_the_translating_handle_disagree(tmp_path: Path) -> None:
     )
 
 
+def test_under_windows_write_semantics_the_two_paths_still_disagree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the actual Windows behaviour here, rather than describing it.
+
+    `Path.write_text(text, encoding="utf-8")` translates `\n` to `os.linesep`.
+    The C implementation of `io` bakes that terminator in at compile time, which
+    is exactly why the defect cannot be reproduced on this machine and why the
+    end-to-end assertion below is vacuous on POSIX.
+
+    `_pyio` is the standard library's pure-Python implementation of the same
+    interface, and it reads `os.linesep` at run time. Pointing it at `"\r\n"`
+    reproduces the Windows write path faithfully on any platform, so the
+    difference between the two handles is a fact this suite can check rather
+    than a claim it has to make. Deleting `newline=""` from `write_table` turns
+    this test red on Linux and macOS; without it, that sabotage is invisible
+    outside the Windows leg.
+    """
+    # No stubs ship for the pure-Python io implementation; it is a standard
+    # library module and the narrow ignore is preferable to widening mypy.
+    import _pyio  # type: ignore[import-not-found]
+
+    monkeypatch.setattr(os, "linesep", WINDOWS_LINESEP)
+    text = "row,one\nrow,two\n"
+
+    with _pyio.open(tmp_path / "translated.csv", "w", encoding="utf-8") as handle:
+        handle.write(text)
+    with _pyio.open(
+        tmp_path / "verbatim.csv", "w", encoding="utf-8", newline=_writer_newline()
+    ) as handle:
+        handle.write(text)
+
+    translated = (tmp_path / "translated.csv").read_bytes()
+    verbatim = (tmp_path / "verbatim.csv").read_bytes()
+
+    assert b"\r\n" in translated, (
+        "the simulation of Windows write semantics did not translate anything, "
+        "so this test cannot show what write_table is defending against"
+    )
+    assert verbatim == text.encode("utf-8"), (
+        "under Windows write semantics the newline argument write_table passes "
+        f"still let CRLF reach disk: {verbatim!r}"
+    )
+
+
+def _writer_newline() -> str:
+    """The `newline` argument `write_table` hands its handle, read from the source.
+
+    Hard-coding `""` here would make the test pass over a `write_table` that had
+    stopped passing it -- the assertion would be about this test's own literal.
+    """
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "qfer_preflight" / "findings_table.py"
+    ).read_text(encoding="utf-8")
+    assert 'path.write_text(text, encoding="utf-8", newline="")' in source, (
+        'write_table no longer writes with newline="", so the renderer\'s line '
+        "terminator is translated by the platform again"
+    )
+    return ""
+
+
 def test_the_writer_is_what_the_command_line_uses() -> None:
     """A seam nothing calls defends nothing.
 
