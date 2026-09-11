@@ -11,7 +11,7 @@ So the property is asserted twice, from two directions, because either one
 alone rots the same way:
 
   * **Behaviourally.** A `check` run that names no destination writes nothing,
-    anywhere — not into the working directory, not into the temporary
+    anywhere: not into the working directory, not into the temporary
     directory. Every output format is exercised, because the writing one is
     the one a reader would assume is the exception.
   * **Structurally.** Every filesystem write in `src/` is enumerated, and the
@@ -67,7 +67,7 @@ def _write_sites() -> dict[str, list[str]]:
 
 def test_every_filesystem_write_in_the_package_is_declared() -> None:
     sites = _write_sites()
-    assert sites, "found no write site at all — the patterns stopped matching, which is not a pass"
+    assert sites, "found no write site at all: the patterns stopped matching, which is not a pass"
     assert set(sites) == set(DECLARED_WRITERS), (
         "a module writes to the filesystem that SECURITY.md's no-retention bullet does not "
         f"account for: {sorted(set(sites) ^ set(DECLARED_WRITERS))}; sites={sites}"
