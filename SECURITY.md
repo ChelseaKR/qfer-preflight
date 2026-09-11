@@ -17,7 +17,11 @@ it is eligible for confidential treatment. The properties worth protecting:
   transmit nothing. Any code path that reaches the network is a vulnerability,
   not a feature.
 - **No retention.** The tool writes no cache, no log file and no temporary
-  copy of input data. Report output goes to stdout and nowhere else.
+  copy of input data, and it writes nothing to a path the caller did not name.
+  Report output goes to stdout unless you name a destination: `--findings-dir
+  DIR` writes one findings table per input into `DIR`, and a findings table
+  quotes cell values, so treat that directory the way you treat the filing.
+  There is no other way to make this tool write a file.
 - **No data in errors beyond what the caller supplied.** Findings quote cell
   values so a filer can locate a problem. Anything that widened that to whole
   rows or whole files in an unexpected destination would be a defect.
