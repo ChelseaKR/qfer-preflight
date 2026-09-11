@@ -311,6 +311,23 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- **`SECURITY.md` promised the tool writes no file, and it writes one.** The
+  no-retention property read *"Report output goes to stdout and nowhere else."*
+  That was true when it was written and stopped being true when `--findings-dir`
+  shipped: a batch findings run writes one table per input into that directory,
+  and a findings table quotes cell values out of the filing. Measured on the
+  committed fixtures -- two inputs, two files, 3,226 bytes of quoted `Year`,
+  `Month` and `CountyNumber` values. Nothing failed, because nothing read the
+  sentence. A filer reading `SECURITY.md` to decide whether this tool may touch
+  a document eligible for confidential treatment was told no such file could
+  exist. The bullet now states the property that is true -- the tool writes
+  nothing to a path the caller did not name, and `--findings-dir` is the only
+  way to name one -- and `tests/test_security_claims.py` holds it from both
+  sides: every output format run with no destination writes nothing into either
+  a scratch working directory or a scratch `TMPDIR`, and every filesystem write
+  in the package is enumerated, so a write added anywhere else fails and asks
+  whether the bullet is still true.
+
 - **The batch SARIF rendering recorded a refusal only where no consumer reads it.**
   An input the tool could not process gets a run of its own, and that run carried its
   reason in `run.properties.problem` alone. A machine reading the log saw an
