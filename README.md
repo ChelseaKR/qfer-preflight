@@ -442,9 +442,27 @@ Commission staff. Neither produces a document published at a URL this project
 can cite, and the Commission has now said it does not intend to change that.
 The rule's promotion condition is therefore declined at the source rather than
 pending, which is a different state for a reader to see and is what its reason
-text now reports. ADR 0009 records the exchange. If you have the data
-dictionary from your portal app landing page, the list can be transcribed and
-the rule implemented; that is a transcription job, not a research one.
+text now reports. ADR 0009 records the exchange.
+
+If you have the data dictionary from your portal app landing page, the list can
+be transcribed, and `check --naics-list PATH` will evaluate QP018 against it:
+
+```sh
+uv run qfer-preflight check filing.csv --naics-list my-naics-codes.txt
+```
+
+That is the only route by which QP018 reaches a verdict, and it is deliberately
+a narrow one. This project ships no list, fetches none, and caches none. The file
+is read from your disk, every line must be exactly six characters once its line
+ending is stripped, and anything else is refused rather than partly read: QP018
+then reports as not evaluated with the refusal as its reason, which is a
+different sentence from the one a run with no list carries. The report names the
+file's path and SHA-256 and says in its header that the rule rested on a
+caller-supplied list rather than a published one, because a reader of the report
+is not necessarily the person who ran it. Your codes are never written into the
+report. `qfer-preflight rules` still prints QP018 as not implemented, because the
+registry describes what this tool ships. ADR 0011 records the reasoning and its
+limits, and the filer guide has the details.
 
 ### Where the published documents disagree with each other
 

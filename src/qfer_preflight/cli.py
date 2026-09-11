@@ -45,6 +45,7 @@ from .report import (
     to_text,
 )
 from .rules import all_rules, rules_for
+from .supplied_codes import NaicsListOffer, offer_naics_list
 
 EXIT_OK = 0
 EXIT_FINDINGS = 1
@@ -116,6 +117,19 @@ def build_parser() -> argparse.ArgumentParser:
             "format is used over more than one input. A batch writes a table per "
             "input and never one across inputs, because a table that concatenated "
             "two filings could not be sorted without mixing them"
+        ),
+    )
+    check.add_argument(
+        "--naics-list",
+        metavar="PATH",
+        help=(
+            "a local file of NAICS codes, one per line, to evaluate QP018 against. "
+            "The Commission does not publish its Valid NAICS codes list and this "
+            "tool ships none; a filer who holds the portal's data dictionary can "
+            "supply it here. The report records the file's path, SHA-256 and code "
+            "count and says in words that the check rested on a caller-supplied "
+            "list rather than a published one. Without the flag QP018 is reported "
+            "as not evaluated, exactly as before"
         ),
     )
     check.add_argument(
@@ -246,7 +260,10 @@ def _expand_inputs(paths: Sequence[str]) -> tuple[list[str] | None, str | None]:
 
 
 def _validate_one(
-    path: str, profile: Profile | None, sink: Callable[[FindingRow], None] | None = None
+    path: str,
+    profile: Profile | None,
+    sink: Callable[[FindingRow], None] | None = None,
+    naics: NaicsListOffer | None = None,
 ) -> BatchEntry:
     """Validate a single input for the batch, never raising.
 
@@ -261,7 +278,7 @@ def _validate_one(
             return BatchEntry(input_name=path, problem=problem or "profile detection failed")
         chosen = detected
     try:
-        return BatchEntry(input_name=path, report=validate_path(path, chosen, sink))
+        return BatchEntry(input_name=path, report=validate_path(path, chosen, sink, naics))
     except OSError as exc:
         return BatchEntry(input_name=path, problem=f"could not read {path}: {exc}")
 
@@ -360,6 +377,25 @@ def _findings_output(
     return render_findings_csv(header, rows, byte_order_mark=byte_order_mark)
 
 
+def _naics_offer(args: argparse.Namespace) -> NaicsListOffer | None:
+    """Read `--naics-list` once for the whole run, and say on stderr if it was refused.
+
+    The refusal also travels in every report, as QP018's not-evaluated reason,
+    which is what a reader of the JSON sees. It is repeated here because stdout
+    is the report and a person who mistyped a path is watching stderr. A refused
+    list does not stop the run: the other twenty-odd rules are still worth
+    reporting, and QP018 lands exactly where it lands with no list at all --
+    unevaluated, dragging the status off `pass`, and non-zero under `--strict`.
+    """
+    path = getattr(args, "naics_list", None)
+    if not path:
+        return None
+    offer = offer_naics_list(path)
+    if offer.refusal is not None:
+        print(offer.refusal, file=sys.stderr)
+    return offer
+
+
 def _check_single(path: str, args: argparse.Namespace) -> int:
     profile, problem = _resolve_profile(args)
     if problem is not None:
@@ -367,7 +403,7 @@ def _check_single(path: str, args: argparse.Namespace) -> int:
         return EXIT_USAGE
     collected: list[FindingRow] = []
     sink = collected.append if args.format in _FINDINGS_FORMATS else None
-    entry = _validate_one(path, profile, sink)
+    entry = _validate_one(path, profile, sink, _naics_offer(args))
     if entry.report is None:
         # Reachable when --profile was omitted and detection refused the
         # header: single-file mode reports that refusal on stderr, exactly as
@@ -406,7 +442,8 @@ def _check_batch(paths: Sequence[str], args: argparse.Namespace) -> int:
     if args.format in _FINDINGS_FORMATS:
         return _check_batch_findings(paths, profile, args)
 
-    entries = [_validate_one(path, profile) for path in paths]
+    naics = _naics_offer(args)
+    entries = [_validate_one(path, profile, None, naics) for path in paths]
 
     output = (
         batch_to_sarif(entries, TOOL_NAME, __version__)
@@ -469,10 +506,11 @@ def _check_batch_findings(
         return EXIT_USAGE
 
     suffix = "csv" if args.format == "findings-csv" else "jsonl"
+    naics = _naics_offer(args)
     entries: list[BatchEntry] = []
     for path in paths:
         collected: list[FindingRow] = []
-        entry = _validate_one(path, profile, collected.append)
+        entry = _validate_one(path, profile, collected.append, naics)
         entries.append(entry)
         if entry.report is None:
             # No table for an input that produced no report. Writing an empty one

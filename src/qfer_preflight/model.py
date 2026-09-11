@@ -16,6 +16,8 @@ import enum
 from dataclasses import dataclass, field
 from typing import Any
 
+from .supplied_codes import SuppliedNaicsList
+
 
 class Severity(enum.Enum):
     """How much a finding matters.
@@ -476,6 +478,12 @@ class Report:
     # hand; every report the engine produces carries one entry per rule and
     # column. See `LedgerEntry`.
     evaluation: list[LedgerEntry] = field(default_factory=list)
+    # The caller-supplied NAICS code list QP018 was evaluated against, on the
+    # runs that were given one. `None` on every other run, and a report with no
+    # list is byte-for-byte the report this tool has always written: the key
+    # below is absent rather than null, because a null would be a new field in
+    # every report ever produced for the sake of one that is rare.
+    naics_list: SuppliedNaicsList | None = None
 
     def to_json(self) -> str:
         """This report as the published JSON, identical to the CLI's.
@@ -621,6 +629,11 @@ class Report:
                 entry.to_dict()
                 for entry in sorted(self.evaluation, key=lambda e: (e.rule_id, e.column or ""))
             ],
+            **(
+                {"code_lists": {"naics": self.naics_list.provenance()}}
+                if self.naics_list is not None
+                else {}
+            ),
         }
 
 

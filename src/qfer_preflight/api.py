@@ -38,11 +38,20 @@ from .engine import ValidationInputError
 from .model import Advisory, Citation, Finding, NotEvaluated, Report, Rule, Severity, Status
 from .profiles import PROFILES, Profile, get_profile
 from .rules import all_rules, rules_for
+from .supplied_codes import (
+    CodeListRefused,
+    NaicsListOffer,
+    SuppliedNaicsList,
+    load_naics_list,
+    offer_naics_list,
+)
 
 __all__ = [
     "Advisory",
     "Citation",
+    "CodeListRefused",
     "Finding",
+    "NaicsListOffer",
     "NotEvaluated",
     "Profile",
     "ProfileDetectionError",
@@ -50,10 +59,13 @@ __all__ = [
     "Rule",
     "Severity",
     "Status",
+    "SuppliedNaicsList",
     "ValidationInputError",
     "detect_profile",
     "list_profiles",
     "list_rules",
+    "load_naics_list",
+    "offer_naics_list",
     "validate",
 ]
 
@@ -78,6 +90,7 @@ def validate(
     *,
     profile: str | Profile | None = None,
     input_name: str | None = None,
+    naics_list: str | os.PathLike[str] | None = None,
 ) -> Report:
     """Validate one filing, given a path or its bytes.
 
@@ -90,11 +103,21 @@ def validate(
     valid filename on purpose: a report should not carry a plausible filename
     nobody supplied.
 
+    `naics_list` is a path to a caller-held file of NAICS codes, one per line,
+    for QP018 to be evaluated against; it is `--naics-list` on the command
+    line. Omitted, QP018 reports as not evaluated exactly as it always has, and
+    the report is unchanged. A list that cannot be read as a code list does not
+    raise here: the refusal becomes QP018's not-evaluated reason, so a caller
+    gets the rest of the report and a sentence saying which of the two reasons
+    applies. `load_naics_list` is the raising form for a caller who wants to
+    check a list before a run.
+
     Raises `ProfileDetectionError` when no profile was given and none could be
     identified, and `ValidationInputError` when a named profile does not
     exist. Every other outcome is a `Report`, including the ones where nothing
     could be read.
     """
+    naics = offer_naics_list(os.fspath(naics_list)) if naics_list is not None else None
     if isinstance(source, bytes | bytearray):
         data = bytes(source)
         chosen = (
@@ -103,7 +126,10 @@ def validate(
             else detect_profile(header_bytes_of(data))
         )
         return engine.validate_bytes(
-            data, chosen, input_name if input_name is not None else DEFAULT_BYTES_INPUT_NAME
+            data,
+            chosen,
+            input_name if input_name is not None else DEFAULT_BYTES_INPUT_NAME,
+            naics=naics,
         )
 
     path = os.fspath(source)
@@ -112,7 +138,7 @@ def validate(
         if profile is not None
         else detect_profile(read_header_bytes(path))
     )
-    report = engine.validate_path(path, chosen)
+    report = engine.validate_path(path, chosen, naics=naics)
     if input_name is not None:
         report.input_name = input_name
     return report

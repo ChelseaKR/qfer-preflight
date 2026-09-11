@@ -15,12 +15,15 @@ below, and each one asserts that the silence is gone.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from qfer_preflight.engine import _unterminated_quote, validate_bytes
 from qfer_preflight.model import Report, Status
 from qfer_preflight.profiles import PROFILE_1306A_S1, PROFILE_1306B
 from qfer_preflight.report import to_json, to_text
+from qfer_preflight.supplied_codes import offer_naics_list
 
 HEADER = ",".join(PROFILE_1306A_S1.header)
 GOOD_ROW = "101,2025,1,34,B,A1,925190,1200,4500000,675000.25"
@@ -115,6 +118,43 @@ def test_adversarial_reports_render_in_both_formats(name: str) -> None:
     assert "status  :" in text
     if report.advisories:
         assert "These are not CEC rules" in text
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_the_corpus_stays_loud_when_a_caller_supplies_a_code_list(
+    name: str, tmp_path: Path
+) -> None:
+    """The same corpus, over the code path a `--naics-list` run takes.
+
+    Supplying a list moves QP018 out of the permanently-unevaluated set for the
+    length of one run, and every gating path in the engine that filtered on a
+    rule being implemented has to account for it: a file that blocks every rule,
+    a header that matches no template, a parse that never reaches a row. Get one
+    of those wrong and QP018 lands in neither output list, which the report's own
+    contradiction check refuses -- but only if something drives these files
+    through it.
+
+    The blanket property is the corpus's, unchanged: no hostile input may come
+    back quiet, and none may report as a pass.
+    """
+    listing = tmp_path / "codes.txt"
+    listing.write_text("925190\n999999\nRE1100\n", encoding="utf-8")
+    report = validate_bytes(
+        CASES[name],
+        PROFILE_1306A_S1,
+        "input.csv",
+        None,
+        offer_naics_list(str(listing)),
+    )
+    assert _says_something(report), (
+        f"{name!r} with a supplied code list produced a report with no findings "
+        "and no advisories, which reads as a clean file"
+    )
+    assert report.status is not Status.PASS
+    accounted = set(report.rules_evaluated) | {item.rule_id for item in report.rules_not_evaluated}
+    assert "QP018" in accounted, (
+        "QP018 applies to this form and the report mentions it in neither list"
+    )
 
 
 # ---------------------------------------------------------------------------
