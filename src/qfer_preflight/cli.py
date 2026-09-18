@@ -31,6 +31,7 @@ from .findings_table import (
     TableHeader,
     render_findings_csv,
     render_findings_jsonl,
+    write_table,
 )
 from .model import BatchEntry, Report, Status
 from .profiles import PROFILES, QFER_PROGRAM_URL, Profile, detect_profiles, get_profile
@@ -334,6 +335,29 @@ def _report_ledger_gaps(input_name: str, report: Report) -> bool:
 _FINDINGS_FORMATS = ("findings-csv", "findings-jsonl")
 
 
+def _write_stdout(text: str) -> None:
+    """Write `text` to stdout as UTF-8, whatever the console's code page is.
+
+    `sys.stdout` on Windows encodes with the active code page -- cp1252 on the
+    hosted runners -- and `--findings-bom` exists to put a U+FEFF at the front
+    of the table so Excel reads it as UTF-8. cp1252 has no U+FEFF, so the flag
+    raised `UnicodeEncodeError` and printed nothing on the one platform Excel
+    runs on. Measured on `windows-latest`, 2026-09-10.
+
+    The same applies to any non-ASCII a filing carries into a finding message.
+    Encoding here rather than reconfiguring `sys.stdout` keeps the change to
+    the one place this tool emits a document, and leaves the diagnostics it
+    writes to stderr alone.
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:  # pragma: no cover - a caller replaced stdout with a text sink
+        sys.stdout.write(text)
+        return
+    sys.stdout.flush()
+    buffer.write(text.encode("utf-8"))
+    buffer.flush()
+
+
 def _findings_output(
     entry: BatchEntry, rows: Sequence[FindingRow], fmt: str, *, byte_order_mark: bool
 ) -> str:
@@ -384,7 +408,7 @@ def _check_single(path: str, args: argparse.Namespace) -> int:
         if args.format == "json"
         else to_text(entry.report)
     )
-    sys.stdout.write(output)
+    _write_stdout(output)
 
     report = entry.report
     gaps = args.strict_ledger and _report_ledger_gaps(entry.input_name, report)
@@ -482,9 +506,9 @@ def _check_batch_findings(
             continue
         destination = directory / f"{Path(entry.input_name).stem}.findings.{suffix}"
         try:
-            destination.write_text(
+            write_table(
+                destination,
                 _findings_output(entry, collected, args.format, byte_order_mark=args.findings_bom),
-                encoding="utf-8",
             )
         except OSError as exc:
             print(f"could not write {destination}: {exc}", file=sys.stderr)
