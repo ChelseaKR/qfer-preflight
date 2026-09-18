@@ -36,7 +36,7 @@ from types import MappingProxyType
 # every one of them unpadded. Its number to name mapping agrees with the table
 # above for 57 of the 58, and the fifty-eighth is a defect in that file rather
 # than a disagreement: number 33 is RIVERSIDE on 245 rows and is also written
-# on one 2024 row labelled IMPERIAL and one labelled SAN DIEGO, while the same
+# on one 2024 row labeled IMPERIAL and one labeled SAN DIEGO, while the same
 # file numbers Imperial 13 and San Diego 37 everywhere else, as this table
 # does. The dataset is aggregate consumption reporting rather than a QFER
 # filing, so it contains neither "00" nor "99", and it grounds nothing about

@@ -417,7 +417,7 @@ def test_a_header_in_the_wrong_case_says_so() -> None:
     shouted = ",".join(name.upper() for name in PROFILE_1306A_S1.header)
     report = _check(f"{shouted}\n{GOOD_ROW}\n")
     message = next(f.message for f in report.findings if f.rule_id == "QP002")
-    assert "capitalisation" in message
+    assert "capitalization" in message
 
 
 def test_a_reordered_header_says_the_order_is_wrong() -> None:

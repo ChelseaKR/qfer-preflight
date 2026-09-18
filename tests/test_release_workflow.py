@@ -323,7 +323,7 @@ def test_only_a_stable_semver_tag_that_is_already_released_may_be_published() ->
 
 
 def test_the_built_artifacts_must_carry_the_tags_own_version() -> None:
-    build = _run_block_of(PUBLISH, "Build and confirm the artefacts carry the tag's version")
+    build = _run_block_of(PUBLISH, "Build and confirm the artifacts carry the tag's version")
     assert 'test -f "dist/qfer_preflight-${VERSION}.tar.gz"' in build
     assert 'test -f "dist/qfer_preflight-${VERSION}-py3-none-any.whl"' in build
     assert 'test "$(ls dist | wc -l)" -eq 2' in build, (

@@ -98,7 +98,7 @@ If you are filing rather than reading code, start with
 synthetic worked example you can run, what each exit code means, when
 `--strict` is the right setting, and what an unevaluated rule means for the
 decision to submit. Its examples are held against real runs by
-`tests/test_filer_guide.py`, so the guide cannot claim behaviour the tool does
+`tests/test_filer_guide.py`, so the guide cannot claim behavior the tool does
 not have. Terms the Commission's documents use, and the ones this tool's
 reports use, are in [`docs/glossary.md`](docs/glossary.md).
 
@@ -313,7 +313,7 @@ and nothing else wants; `--findings-dir DIR` is required when a findings format
 is used over more than one input, because a batch writes one table per input and
 concatenating them would produce a table nobody can sort.
 
-Every field in the CSV is neutralised against spreadsheet formula injection. The
+Every field in the CSV is neutralized against spreadsheet formula injection. The
 tool already raises an advisory about a formula-looking cell in a *filing*; that
 hazard does not stop applying because the file is ours. The JSONL form is
 machine-read and is left exactly as the scan produced it.
@@ -361,7 +361,7 @@ Implemented and grounded in published text:
 | QP012 | Quarter Number is 1 to 4 |
 | QP013 | County Number is in the published county table |
 | QP014 | Customer Type is D, B or C |
-| QP015 | Customer Group matches a published value, capitalised exactly |
+| QP015 | Customer Group matches a published value, capitalized exactly |
 | QP016 | Rate Code is in the published gas rate code table |
 | QP017 | NAICS Code is exactly six characters |
 | QP019 | Numeric fields carry `0`, not blank, `NULL` or `-` |
@@ -469,7 +469,7 @@ A second CEC dataset, the county level table on the Energy Consumption Data
 Files page, was read on 2026-08-17 and corroborates the county code set
 independently: 58 distinct county numbers, 1 through 58, every one unpadded,
 with a number to name mapping agreeing with the instruction table on 57 of the
-58. That is a second Commission publication, from a different programme,
+58. That is a second Commission publication, from a different program,
 arriving at the same codes, so the transcribed table is not a misreading of one
 document. It does not turn padding into an error, for three reasons recorded in
 ADR 0008: no published source says a filer must not pad, the county numbers in
@@ -546,7 +546,7 @@ template. Neither template is published, so there is nothing to transcribe.
 
 ## Sources
 
-Every rule traces to one of these. They were read directly, not summarised
+Every rule traces to one of these. They were read directly, not summarized
 from secondary sources.
 
 - QFER program page:

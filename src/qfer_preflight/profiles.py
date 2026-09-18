@@ -5,7 +5,7 @@ Data Submission Portal expects, which columns carry which published code set,
 and the regulation the form cites as its authority.
 
 The header tuples in this module are transcribed byte for byte from the CSV
-templates published on the CEC QFER page. They are not normalised, corrected
+templates published on the CEC QFER page. They are not normalized, corrected
 or tidied. Two of the published headers contain irregularities:
 
   * CEC-1306A Schedule 1 spells its seventh column "NumberofCustomers" with a

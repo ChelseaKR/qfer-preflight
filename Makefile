@@ -100,5 +100,5 @@ no-dashes: ## Reject em dashes and en dashes in tracked text
 verify: lock-check fmt-check lint typecheck security test no-dashes ## Run the full gate
 	@echo "verify OK"
 
-clean: ## Remove build and test artefacts
+clean: ## Remove build and test artifacts
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov dist build

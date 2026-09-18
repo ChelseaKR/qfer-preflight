@@ -178,7 +178,7 @@ def _detect_profile(path: str) -> tuple[Profile | None, str | None]:
     more; it never validates, and a BOM stripped here is still reported by the
     validation run as ADV-BOM.
 
-    Reading exactly those bytes is the contract, not an optimisation. Opening
+    Reading exactly those bytes is the contract, not an optimization. Opening
     a text handle looks like it reads the header and does not: `TextIOWrapper`
     decodes a whole read-ahead block to satisfy one `next()`, so an invalid
     byte thousands of bytes past the header raised here and was reported as a

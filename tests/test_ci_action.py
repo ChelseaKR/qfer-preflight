@@ -463,7 +463,7 @@ def _target(paths: str, scratch: Path) -> str:
 
     Everything the workflow points at is a tracked fixture except the empty
     directory, which git cannot carry, so the workflow makes it and so does
-    this. An unrecognised value fails rather than skipping: a case nobody can
+    this. An unrecognized value fails rather than skipping: a case nobody can
     reproduce locally is a case nobody is measuring.
     """
     if paths == "selftest-empty":

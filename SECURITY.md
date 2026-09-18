@@ -6,7 +6,7 @@ Report privately through GitHub Security Advisories on this repository
 ("Security" tab, "Report a vulnerability"). Please do not open a public issue
 for a security problem.
 
-Expect an acknowledgement within 7 days and an assessment within 30 days.
+Expect an acknowledgment within 7 days and an assessment within 30 days.
 
 ## What counts as a security issue here
 

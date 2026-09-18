@@ -21,14 +21,14 @@ a partial answer rendered as a complete one. So the ungrouped rows come from
 `engine.FindingSink`, which is called once per occurrence as the single pass reaches it,
 and this module never sees a `Finding` at all.
 
-## Why every cell is neutralised
+## Why every cell is neutralized
 
 The tool already raises an advisory about formula-looking cells in a *filing*, because a
 value beginning `=`, `+`, `-` or `@` is executed by Excel and Google Sheets when the file
 is opened. That hazard does not stop applying because it is our file: a filer opens this
 table in the same spreadsheet, and the messages in it quote the filing's own cell values.
 
-So every field is neutralised on the way out, by prefixing an apostrophe -- the form both
+So every field is neutralized on the way out, by prefixing an apostrophe -- the form both
 Excel and Sheets read as "this is text". `-` is included, which costs a leading
 apostrophe on negative numbers, and that is the right trade: a table of findings is read,
 not summed, and the alternative is shipping the injection this tool warns filers about.
@@ -54,7 +54,7 @@ from qfer_preflight.engine import FindingRow
 __all__ = [
     "FINDINGS_TABLE_COLUMNS",
     "TableHeader",
-    "neutralise",
+    "neutralize",
     "render_findings_csv",
     "render_findings_jsonl",
 ]
@@ -78,7 +78,7 @@ _FORMULA_LEADERS = ("=", "+", "-", "@")
 _TEXT_MARKER = "'"
 
 
-def neutralise(value: str) -> str:
+def neutralize(value: str) -> str:
     """Return `value` in a form no spreadsheet will execute.
 
     Leading whitespace is considered, because a spreadsheet strips it before deciding
@@ -88,6 +88,10 @@ def neutralise(value: str) -> str:
     if value.lstrip().startswith(_FORMULA_LEADERS):
         return _TEXT_MARKER + value
     return value
+
+
+# Deprecated alias for the name released in v0.2.0; use `neutralize`.
+neutralise = neutralize
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +141,7 @@ def render_findings_csv(
     *,
     byte_order_mark: bool = False,
 ) -> str:
-    """The table as CSV, every field neutralised, sorted by row then rule.
+    """The table as CSV, every field neutralized, sorted by row then rule.
 
     `byte_order_mark` is off by default and exists for Excel, which reads a UTF-8
     file without one as the local code page and mangles anything non-ASCII.
@@ -148,7 +152,7 @@ def render_findings_csv(
         buffer.write(f"{line}\n")
     writer.writerow(FINDINGS_TABLE_COLUMNS)
     for entry in _sorted(rows):
-        writer.writerow([neutralise(_cell(v)) for v in _fields(entry)])
+        writer.writerow([neutralize(_cell(v)) for v in _fields(entry)])
     text = buffer.getvalue()
     return "﻿" + text if byte_order_mark else text
 

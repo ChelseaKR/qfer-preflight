@@ -94,7 +94,7 @@ def test_each_manifest_entry_carries_its_own_triple() -> None:
     """Per entry, not file-wide.
 
     The count above is a whole-file total, so an entry carrying two hashes
-    beside a neighbour carrying none satisfies it. The manifest exists so that
+    beside a neighbor carrying none satisfies it. The manifest exists so that
     a silent revision announces itself, and it can only do that for a document
     whose own hash is recorded next to its own url.
     """

@@ -5,7 +5,7 @@ said that has had two options: `rules --profile`, which prints the whole registr
 filer guide, which is written per form rather than per rule. Neither answers "why this rule,
 and where does its text come from" in one command.
 
-This adds no judgement and no text. Every sentence it prints was transcribed into `rules.py`
+This adds no judgment and no text. Every sentence it prints was transcribed into `rules.py`
 or `codes.py` already, or is produced by the engine itself:
 
 * the verbatim quote and its locator come from the `RuleSpec`, resolved through `bind` for the

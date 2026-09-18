@@ -183,7 +183,7 @@ def test_an_input_that_was_never_validated_says_so_where_a_consumer_looks(
     This branch recorded the refusal in `run.properties.problem` alone, which is the
     same extension bag the single-report rendering was corrected for using. A machine
     reading this log saw an unsuccessful invocation, an empty `results` array, no
-    notification and no catalogued descriptor, and had nowhere in the standard to
+    notification and no cataloged descriptor, and had nowhere in the standard to
     learn that the filing was never validated or why: the run that checked nothing
     said less, where consumers look, than the run that checked almost everything.
 
@@ -207,11 +207,11 @@ def test_an_input_that_was_never_validated_says_so_where_a_consumer_looks(
     # The native reason survives into the notification, not only into properties.
     assert "could not read" in notification["message"]["text"]
 
-    # The descriptor it names is catalogued, and the index resolves to it.
-    catalogue = run["tool"]["driver"]["notifications"]
+    # The descriptor it names is cataloged, and the index resolves to it.
+    catalog = run["tool"]["driver"]["notifications"]
     position = notification["descriptor"]["index"]
-    assert catalogue[position]["id"] == notification["descriptor"]["id"]
-    assert catalogue[position]["defaultConfiguration"]["level"] == "error"
+    assert catalog[position]["id"] == notification["descriptor"]["id"]
+    assert catalog[position]["defaultConfiguration"]["level"] == "error"
 
     # And the sibling run, which did reach a verdict, still uses warning.
     validated = by_name[str(clean)]
@@ -378,7 +378,7 @@ def test_a_notification_descriptor_index_resolves_to_the_descriptor_it_names() -
             f"but the notification names {reference['id']!r}"
         )
 
-    # Catalogued once each, and only what was actually emitted. A descriptor
+    # Cataloged once each, and only what was actually emitted. A descriptor
     # for something that did not happen is a claim about the run.
     ids = [descriptor["id"] for descriptor in descriptors]
     assert len(ids) == len(set(ids))
