@@ -1,6 +1,7 @@
 # Every target here is what CI runs. `make verify` is the whole gate.
 .DEFAULT_GOAL := help
-.PHONY: help sync lock lock-check fmt fmt-check lint typecheck security audit secrets test no-dashes verify clean
+.PHONY: help sync lock lock-check fmt fmt-check lint typecheck security audit secrets test \
+        no-dashes fixtures-verbatim verify clean
 
 UV ?= uv
 GITLEAKS ?= gitleaks
@@ -97,7 +98,35 @@ no-dashes: ## Reject em dashes and en dashes in tracked text
 	  exit $$status; \
 	fi
 
-verify: lock-check fmt-check lint typecheck security test no-dashes ## Run the full gate
+fixtures-verbatim: ## Fail if a committed fixture is not checked out byte for byte
+# The CSV fixtures are inputs whose exact bytes the tests assert over, and
+# `.gitattributes` marks them `-text` so git performs no line-ending
+# translation on checkout. On Windows that mark is the only thing between the
+# suite and a checkout that hands it the CRLF the assertions are hunting for --
+# a run that would then pass by measuring its own checkout.
+#
+# The row count is read before anything else. `git ls-files --eol` over a path
+# that has stopped matching prints nothing and exits 0, and an empty listing
+# satisfies every "no bad rows" test there is.
+#
+# `w/none` is not a fault: an empty fixture has no line ending to get wrong.
+	@rows=$$(git ls-files --eol tests/fixtures); \
+	total=$$(printf '%s\n' "$$rows" | grep -c . || true); \
+	if [ "$$total" -lt 5 ]; then \
+	  echo "read $$total fixture row(s); the listing is not finding tests/fixtures" >&2; \
+	  exit 1; \
+	fi; \
+	bad=$$(printf '%s\n' "$$rows" | grep -E 'w/(crlf|mixed)' || true); \
+	loose=$$(printf '%s\n' "$$rows" | grep -v 'attr/-text' || true); \
+	if [ -n "$$bad$$loose" ]; then \
+	  echo "fixtures are not protected from line-ending translation:" >&2; \
+	  [ -n "$$bad" ] && printf 'translated: %s\n' "$$bad" >&2; \
+	  [ -n "$$loose" ] && printf 'not marked -text: %s\n' "$$loose" >&2; \
+	  exit 1; \
+	fi; \
+	echo "$$total fixture(s) checked out verbatim"
+
+verify: lock-check fmt-check lint typecheck security test no-dashes fixtures-verbatim ## Run the full gate
 	@echo "verify OK"
 
 clean: ## Remove build and test artefacts

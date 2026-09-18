@@ -48,6 +48,12 @@ _SETUP_PATTERNS = (
     # The pinned gitleaks download, identified by the hash check that makes it
     # safe. A step that stops verifying the checksum stops matching this.
     re.compile(r"sha256sum -c -", re.MULTILINE),
+    # Installing GNU Make on the Windows leg. The rule this list exempts from
+    # is that a *gate* must be reachable through the Makefile; a step whose job
+    # is to put `make` on the PATH cannot itself be a make target, and it
+    # checks nothing. Spelled tightly enough that it cannot cover an install
+    # step that grows a gate on the end of it.
+    re.compile(r"^choco install make\b"),
 )
 
 _MAKE_INVOCATION = re.compile(r"\bmake\s+([a-z][a-z-]*)\b")

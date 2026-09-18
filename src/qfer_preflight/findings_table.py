@@ -39,6 +39,21 @@ not summed, and the alternative is shipping the injection this tool warns filers
 and an empty table is the same sentence in a different format. The header block therefore
 carries the run's **status** alongside the counts, so a table with zero lines for a filing
 that was never validated says so on its first line rather than looking like a clean bill.
+
+## Why writing the file lives here
+
+Both renderers pin their line terminator: the CSV writer is constructed with
+`lineterminator="\\n"`, and the JSONL renderer joins on `"\\n"`. That decision was
+undone one layer up. `Path.write_text(text, encoding="utf-8")` opens the handle with
+`newline=None`, which is text mode with translation on, so every `\\n` becomes
+`os.linesep` -- `\\r\\n` on Windows. The same command over the same filing therefore
+produced different bytes depending on which machine ran it, while the module that
+chose the terminator said otherwise.
+
+`write_table` is the one place a rendered table reaches a file, and it passes
+`newline=""` so the bytes on disk are the bytes the renderer produced. It is here
+rather than in the command line because the line-terminator decision is here; a
+caller should not have to know that the renderer's choice needs defending.
 """
 
 from __future__ import annotations
@@ -48,6 +63,7 @@ import io
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from qfer_preflight.engine import FindingRow
 
@@ -57,6 +73,7 @@ __all__ = [
     "neutralise",
     "render_findings_csv",
     "render_findings_jsonl",
+    "write_table",
 ]
 
 #: The column order, fixed. A spreadsheet formula written against this table names
@@ -186,6 +203,19 @@ def render_findings_jsonl(header: TableHeader, rows: Sequence[FindingRow]) -> st
         for entry in _sorted(rows)
     )
     return "\n".join(lines) + "\n"
+
+
+def write_table(path: Path, text: str) -> None:
+    """Write a rendered table to `path` exactly as it was rendered.
+
+    `newline=""` is the whole content of this function and it is not cosmetic.
+    Without it the handle translates every `\\n` to `os.linesep`, so a table
+    written on Windows carries `\\r\\n` while the renderer that produced it
+    pinned `\\n`, and `--findings-bom` -- a flag whose entire purpose is control
+    over the bytes Excel receives -- sits on top of output whose line endings
+    the tool had stopped choosing.
+    """
+    path.write_text(text, encoding="utf-8", newline="")
 
 
 def _fields(entry: FindingRow) -> tuple[object, ...]:

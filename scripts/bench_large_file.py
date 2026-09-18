@@ -15,13 +15,27 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
 import sys
 import tempfile
 import time
+from types import ModuleType
 
 from qfer_preflight.engine import validate_path
 from qfer_preflight.profiles import get_profile
+
+#: `resource` is Unix-only. Importing it at module scope made this script --
+#: and `tests/test_bench_harness.py`, which loads it -- fail to import on
+#: Windows, which nothing noticed until a Windows CI leg existed to notice it.
+#: The annotation is what keeps the `None` real to the type checker; a bare
+#: `resource = None` in the handler is narrowed away and the branch below then
+#: reads as unreachable.
+resource: ModuleType | None
+try:
+    import resource as _resource
+except ModuleNotFoundError:  # pragma: no cover - taken only on Windows
+    resource = None
+else:  # pragma: no cover - taken only on a Unix
+    resource = _resource
 
 HEADER = (
     "CompanyNumber,Year,Month,CountyNumber,CustomerType,RateClass,NAICSCode,"
@@ -47,7 +61,17 @@ def maxrss_to_mib(maxrss: int, platform: str = sys.platform) -> float:
     return maxrss * bytes_per_unit / (1024 * 1024)
 
 
-def peak_rss_mib() -> float:
+def peak_rss_mib() -> float | None:
+    """Peak resident set size in MiB, or ``None`` where the platform cannot say.
+
+    `getrusage(2)` is Unix-only. Returning `0.0` on a platform without it
+    would print a memory figure of zero for a process that plainly used
+    memory -- a value that was never measured, rendered as one that was,
+    which is the defect this whole project is written against. The caller
+    prints the absence instead.
+    """
+    if resource is None:
+        return None
     return maxrss_to_mib(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
 
 
@@ -80,7 +104,11 @@ def main() -> int:
     print(f"rows read     : {report.rows_read:,}")
     print(f"write time    : {written - started:.2f}s")
     print(f"validate time : {finished - written:.2f}s")
-    print(f"peak RSS      : {peak_rss_mib():.1f} MiB (baseline {before:.1f} MiB)")
+    peak = peak_rss_mib()
+    if peak is None or before is None:
+        print(f"peak RSS      : not measured -- {sys.platform} has no getrusage(2)")
+    else:
+        print(f"peak RSS      : {peak:.1f} MiB (baseline {before:.1f} MiB)")
     return 0
 
 
