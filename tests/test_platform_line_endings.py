@@ -51,8 +51,8 @@ def _write_through_a_translating_handle(path: Path, text: str) -> None:
     """Write `text` the way `Path.write_text` writes it on Windows.
 
     `newline=None` on a write handle means "translate `\\n` to `os.linesep`", so on
-    Linux it is the identity and cannot stand in for the Windows behaviour. Naming
-    the terminator explicitly reproduces that behaviour everywhere, which is what
+    Linux it is the identity and cannot stand in for the Windows behavior. Naming
+    the terminator explicitly reproduces that behavior everywhere, which is what
     lets the assertion below discriminate on the machine this suite usually runs on.
     """
     with open(path, "w", encoding="utf-8", newline=WINDOWS_LINESEP) as handle:
@@ -107,7 +107,7 @@ def test_the_writer_and_the_translating_handle_disagree(tmp_path: Path) -> None:
 def test_under_windows_write_semantics_the_two_paths_still_disagree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Run the actual Windows behaviour here, rather than describing it.
+    """Run the actual Windows behavior here, rather than describing it.
 
     `Path.write_text(text, encoding="utf-8")` translates `\n` to `os.linesep`.
     The C implementation of `io` bakes that terminator in at compile time, which

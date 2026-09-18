@@ -59,14 +59,14 @@ jobs:
   # A second platform, and it is here for one measured reason rather than for
   # completeness. The package is pure Python, so the lint, typecheck and
   # security stages cannot differ by operating system and are deliberately not
-  # repeated. What can differ is **byte-level file behaviour**, and this tool
+  # repeated. What can differ is **byte-level file behavior**, and this tool
   # writes files a filer opens in Excel.
   #
   # The examinable surface is small and was counted rather than assumed. Every
   # IO call site in `src/qfer_preflight` is one of:
   #   * a binary read (`engine.py`, `detect.py`) -- platform-independent;
   #   * a text read with an explicit encoding (`diff.py`) -- and reading is the
-  #     safe direction, since universal-newline translation on read normalises
+  #     safe direction, since universal-newline translation on read normalizes
   #     CRLF to LF, which is what the readers want anyway;
   #   * exactly **one text write**, `findings_table.write_table`.
   # So the domain this leg exists to cover is one write site of one, and it
@@ -83,7 +83,7 @@ jobs:
   # version, so adding an OS axis would produce two jobs called "Verify on
   # Python 3.13" and make the name a required-status-check cannot resolve.
   windows:
-    name: Byte behaviour on Windows
+    name: Byte behavior on Windows
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -95,7 +95,7 @@ jobs:
           persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           enable-cache: true
 
