@@ -146,7 +146,7 @@ def load_naics_list(path: str) -> SuppliedNaicsList:
     The digest is taken over the file's bytes as read, before any decoding, so
     it identifies the file rather than this function's idea of it.
 
-    Nothing here normalises. A line is stripped of its line ending and compared
+    Nothing here normalizes. A line is stripped of its line ending and compared
     exactly, because a trailing space, a tab or a stray quotation mark in a code
     list is the sort of thing that silently turns a valid code into one that
     matches nothing -- and the resulting QP018 error would name a perfectly good
