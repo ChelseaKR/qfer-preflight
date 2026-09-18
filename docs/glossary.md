@@ -69,7 +69,7 @@ Quarterly Report", is the form's own name.
 A published Customer Group value on `CEC-1308C`, glossed in the instructions'
 "Customer Group" list as "thermally enhanced oil recovery". It is carried in
 `GAS_CUSTOMER_GROUPS` in `codes.py` and checked by QP015, which compares
-spelling and capitalisation exactly, because the same section reads
+spelling and capitalization exactly, because the same section reads
 "IMPORTANT: The Customer Group value must be entered exactly as spelled and
 capitalized above."
 

@@ -229,7 +229,7 @@ def _kind(expected: str, found: str, expected_all: Sequence[str]) -> str:
 
 _KIND_PHRASES = {
     _WHITESPACE: ", which is the right name with whitespace around it",
-    _CASE: ", which differs only in capitalisation",
+    _CASE: ", which differs only in capitalization",
     _ORDER: ", which the template puts in a different position",
     _OTHER: "",
 }
@@ -293,7 +293,7 @@ def _uniform_summary(differences: list[tuple[str, str]], expected: Sequence[str]
     if only == _CASE:
         return (
             f"All {len(differences)} mismatched column names are correct apart "
-            "from capitalisation. The template's spelling is authoritative, "
+            "from capitalization. The template's spelling is authoritative, "
             "including its lower case letters."
         )
     if only == _ORDER and len(differences) == len(expected):

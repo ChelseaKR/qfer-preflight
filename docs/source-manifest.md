@@ -12,7 +12,7 @@ instruction URL, template URL and workshop deck URL the code cites must appear
 here with a well formed hash and date. The runtime never reads this file.
 Nothing here is fetched at validation time; the hashes are dev-time snapshots
 of documents that live on the Commission's site, recorded so drift is visible,
-not so behaviour can depend on them.
+not so behavior can depend on them.
 
 ## The watcher
 
@@ -47,7 +47,7 @@ answers it.
 3. If a quoted passage changed wording, update the transcription deliberately:
    rules carry quotes verbatim, defects included, per
    `docs/adr/0002-transcribe-published-artifacts-verbatim.md`.
-4. If the change alters what a rule reports, that is a severity or behaviour
+4. If the change alters what a rule reports, that is a severity or behavior
    decision: write the ADR, update the tests, record it in the changelog.
 5. Only then update the `sha256` and `retrieved` lines here, with the changelog
    entry naming which revision changed.

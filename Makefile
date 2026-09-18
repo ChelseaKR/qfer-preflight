@@ -129,5 +129,5 @@ fixtures-verbatim: ## Fail if a committed fixture is not checked out byte for by
 verify: lock-check fmt-check lint typecheck security test no-dashes fixtures-verbatim ## Run the full gate
 	@echo "verify OK"
 
-clean: ## Remove build and test artefacts
+clean: ## Remove build and test artifacts
 	rm -rf .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov dist build

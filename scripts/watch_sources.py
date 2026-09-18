@@ -204,7 +204,7 @@ def check_entry(entry: ManifestEntry, *, dry_run: bool) -> Result:
     )
 
 
-def summarise(results: Sequence[Result]) -> dict[str, object]:
+def summarize(results: Sequence[Result]) -> dict[str, object]:
     counts = {outcome.value: 0 for outcome in Outcome}
     for result in results:
         counts[result.outcome.value] += 1
@@ -299,7 +299,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     results = [check_entry(entry, dry_run=args.dry_run) for entry in entries]
-    summary = summarise(results)
+    summary = summarize(results)
     print(json.dumps(summary, indent=2, sort_keys=True) if args.json else render(summary), end="")
 
     counts = summary["counts"]

@@ -24,7 +24,7 @@ unrelated ones underneath it, which are the findings the filer would not have
 found on their own.
 
 **It is expensive.** One `Finding` object per bad cell, each holding its own
-copy of the same message, before anything gets the chance to summarise them.
+copy of the same message, before anything gets the chance to summarize them.
 
 Advisories already had an answer: at most five examples per column, with the
 total still reported. Findings did not, and the reason they did not is worth

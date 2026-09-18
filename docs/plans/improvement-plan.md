@@ -199,7 +199,7 @@ documents and outputs, rather than its validation logic.
   error rather than a failure and carrying a stdlib message. The construction is
   now the check, deliberately and with the authored message.
 - **`test_source_manifest.py`** compared `len(urls) == len(hashes) == len(dates)`
-  file-wide. An entry carrying two hashes beside a neighbour carrying none
+  file-wide. An entry carrying two hashes beside a neighbor carrying none
   satisfies it, which was verified by planting exactly that: the totals stayed
   13/13/13 and the test stayed green. Each entry is now checked for its own
   triple, because the manifest can only announce a revision for a document whose

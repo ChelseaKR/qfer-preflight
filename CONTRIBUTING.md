@@ -121,7 +121,7 @@ so changing the identifier space fails the build until the ADR is amended.
 
 ## Transcription conventions
 
-Published text is copied exactly, defects included. The only normalisation is
+Published text is copied exactly, defects included. The only normalization is
 that typographic quotation marks become ASCII quotation marks. Do not correct
 spelling in a quote, and do not tidy a published column name. See ADR 0002.
 

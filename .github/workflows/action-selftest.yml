@@ -37,7 +37,7 @@ permissions:
   contents: read
 
 # Same reasoning as ci.yml: a push to the default branch gets a group of its
-# own, so no commit reaches main with its only verdict cancelled or evicted.
+# own, so no commit reaches main with its only verdict canceled or evicted.
 concurrency:
   group: action-selftest-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

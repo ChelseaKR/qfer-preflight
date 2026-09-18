@@ -153,7 +153,7 @@ def test_a_clean_report_declares_a_merge_count_of_zero() -> None:
     assert payload["collapsed"]["identical_findings_merged"] == 0
 
 
-def test_a_few_repeats_are_listed_in_full_rather_than_summarised() -> None:
+def test_a_few_repeats_are_listed_in_full_rather_than_summarized() -> None:
     text = to_text(_same_bad_county(3))
     assert "The same finding appears on 3 rows: rows 2, 3, 4." in text
 
@@ -232,7 +232,7 @@ def test_a_large_run_of_identical_findings_is_bounded_work() -> None:
 
     Holding one object per bad cell would mean 200,000 copies of the same
     three hundred character sentence before anything got the chance to
-    summarise them. This asserts the shape rather than the memory: one group,
+    summarize them. This asserts the shape rather than the memory: one group,
     five example rows, whatever the row count.
     """
     report = _same_bad_county(200_000)

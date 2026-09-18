@@ -10,7 +10,7 @@ document eligible for confidential treatment was told no file could exist.
 So the property is asserted twice, from two directions, because either one
 alone rots the same way:
 
-  * **Behaviourally.** A `check` run that names no destination writes nothing,
+  * **Behaviorally.** A `check` run that names no destination writes nothing,
     anywhere: not into the working directory, not into the temporary
     directory. Every output format is exercised, because the writing one is
     the one a reader would assume is the exception.

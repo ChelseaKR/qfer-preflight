@@ -1,4 +1,4 @@
-"""Rule-by-rule behaviour, and the integrity of the registry itself."""
+"""Rule-by-rule behavior, and the integrity of the registry itself."""
 
 from __future__ import annotations
 
@@ -319,7 +319,7 @@ def test_a_zero_padded_county_warns_rather_than_failing() -> None:
 
 
 @pytest.mark.parametrize("padded", ["01", "02", "03", "04", "05", "06", "07", "08", "09"])
-def test_every_single_digit_county_is_recognised_when_padded(padded: str) -> None:
+def test_every_single_digit_county_is_recognized_when_padded(padded: str) -> None:
     data = _rows(PROFILE_1306A_S1, f"1,2025,1,{padded},B,A1,999999,1,1,1")
     report = validate_bytes(data, PROFILE_1306A_S1, "x.csv")
     assert "QP013" not in _fired(report)

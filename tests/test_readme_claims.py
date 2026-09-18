@@ -168,7 +168,7 @@ def test_the_readme_lists_every_supported_profile() -> None:
 # and into the implemented one, so the README told a filer that totals rows
 # are checked when no rule evaluates them, and `pytest -q` reported 505
 # passed. `CLAUDE.md` says never let an unevaluated rule report as passed;
-# ADR 0001 makes it the repository's first contract. The engine honours it.
+# ADR 0001 makes it the repository's first contract. The engine honors it.
 # The README could say the opposite and no gate objected.
 #
 # So the membership of both tables is derived from `implemented`.

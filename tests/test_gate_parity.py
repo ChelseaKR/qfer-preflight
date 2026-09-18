@@ -40,7 +40,7 @@ GATE_WORKFLOWS = ("ci.yml", "security.yml")
 
 # Steps that install something rather than checking something. A step is
 # allowed not to call make only if its script is one of these. Kept as an
-# explicit list, because "looks like setup" is exactly the judgement that lets
+# explicit list, because "looks like setup" is exactly the judgment that lets
 # a real gate slip out of the parity requirement.
 _SETUP_PATTERNS = (
     re.compile(r"^uv python install\b"),
@@ -224,7 +224,7 @@ def test_the_parity_check_accepts_a_real_make_step() -> None:
     assert _MAKE_INVOCATION.findall("make secrets") == ["secrets"]
 
 
-def test_setup_steps_are_recognised_narrowly() -> None:
+def test_setup_steps_are_recognized_narrowly() -> None:
     """The exemption must not stretch to cover a gate."""
     assert _is_setup("uv sync --locked")
     assert _is_setup("uv python install 3.12")
@@ -246,12 +246,12 @@ def test_the_recipe_reader_ignores_comments() -> None:
 
 @pytest.mark.parametrize("workflow", GATE_WORKFLOWS)
 def test_a_push_run_cannot_be_thrown_away_by_a_later_push(workflow: str) -> None:
-    """Cancelling a superseded pull request run is wanted. Cancelling a push run is not.
+    """Canceling a superseded pull request run is wanted. Canceling a push run is not.
 
     A concurrency group keyed on `github.ref` puts every push to the default
-    branch into one group, and cancelling in progress runs then makes each
+    branch into one group, and canceling in progress runs then makes each
     merge discard the run belonging to the commit before it. Measured on
-    2026-09-06 in this repository: three commits sit on `main` with cancelled
+    2026-09-06 in this repository: three commits sit on `main` with canceled
     runs or none at all, from three pull requests merged thirteen seconds
     apart. A gate whose result was thrown away is indistinguishable from a gate
     that never ran.
