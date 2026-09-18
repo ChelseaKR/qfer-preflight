@@ -48,10 +48,14 @@ WRITE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("os-replace-or-rename", re.compile(r"\bos\.(replace|rename)\(")),
 )
 
-#: The one module allowed to write, and why. A second entry here is a change to
-#: what SECURITY.md promises, not a refactor.
+#: The modules allowed to write, and why. Both serve the one promise SECURITY.md
+#: makes: `cli.py` creates the `--findings-dir` directory and hands each table to
+#: `findings_table.write_table`, which writes it with the line terminator the
+#: renderer chose. A new entry for any other reason is a change to what
+#: SECURITY.md promises, not a refactor.
 DECLARED_WRITERS: dict[str, str] = {
     "cli.py": "--findings-dir: one findings table per input, into a directory the caller names",
+    "findings_table.py": "write_table: the one write --findings-dir makes, per table, called from cli.py",
 }
 
 
