@@ -129,7 +129,7 @@ def batch_to_text(entries: Sequence[BatchEntry], tool: str) -> str:
 # ADR 0001 names as the most dangerous failure a validator has.
 #
 # The standard has a place for a condition that arose during a run and is not
-# a result: `invocation.toolExecutionNotifications`, catalogued in
+# a result: `invocation.toolExecutionNotifications`, cataloged in
 # `tool.driver.notifications`. Every unevaluated rule gets one, and so does
 # the verdict, in the same sentence the text rendering prints.
 #
@@ -246,11 +246,11 @@ def _sarif_rules(report: Report) -> tuple[list[dict[str, Any]], dict[str, int]]:
 def _sarif_notifications(report: Report) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Everything the run has to say that is not a finding.
 
-    Returns the descriptor catalogue for `tool.driver.notifications` and the
+    Returns the descriptor catalog for `tool.driver.notifications` and the
     notifications themselves for `invocation.toolExecutionNotifications`.
 
     Only descriptors an emitted notification actually references are
-    catalogued, exactly as `_sarif_rules` catalogues only the rules the
+    cataloged, exactly as `_sarif_rules` catalogs only the rules the
     results reference, so the array is never a claim about something that did
     not happen. `index` is recorded before each append, so it is the position
     by construction rather than a count kept in step by hand.
@@ -444,7 +444,7 @@ def batch_to_sarif(entries: Sequence[BatchEntry], tool: str, tool_version: str) 
     ``run.properties.problem``, which is the same place, and the same mistake, that
     the single-report rendering above was corrected for: an extension property no
     SARIF consumer reads. A machine saw an unsuccessful invocation, an empty
-    ``results`` array, no notification and no catalogued descriptor, and had nowhere
+    ``results`` array, no notification and no cataloged descriptor, and had nowhere
     in the standard to learn that this filing was never validated or why. The fix
     that gave every unevaluated rule a notification never reached this branch, so
     the run that checked *nothing* said less, in the places a consumer looks, than

@@ -40,7 +40,7 @@ list.
 COUNTY_NAME, SECTOR, RNR and GWH across 14,168 data rows covering 1990 to 2024.
 It uses exactly 58 distinct county numbers, 1 through 58, and its number to
 name mapping agrees with the transcribed table for 57 of them. This is a second
-CEC publication, produced by a different programme for a different purpose,
+CEC publication, produced by a different program for a different purpose,
 arriving at the same code set. The transcription in `codes.py` is not a
 misreading of one document.
 
@@ -68,7 +68,7 @@ grounds nothing about either.
 
 **The file is not error free, and that is recorded rather than smoothed over.**
 County number 33 is RIVERSIDE on 245 rows. It also appears on exactly two 2024
-rows labelled IMPERIAL and SAN DIEGO. The same file numbers Imperial 13 and San
+rows labeled IMPERIAL and SAN DIEGO. The same file numbers Imperial 13 and San
 Diego 37 everywhere else, matching the instruction table, so these two rows are
 a defect in the CEC's own file rather than evidence of a different numbering.
 Reporting the corroboration without this would overstate it.

@@ -56,7 +56,7 @@ document before it did too.
 
 That also disposes of the "superseded draft" reading of the deck. Slide 9
 lists its four values under the heading "Updated formatting/validations", as
-new portal behaviour rather than as a restatement of the instructions, and the
+new portal behavior rather than as a restatement of the instructions, and the
 instructions that followed did not contradict it. They added one of the deck's
 four values and stayed silent on another.
 

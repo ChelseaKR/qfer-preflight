@@ -84,7 +84,7 @@ TENS_WORDS: dict[int, str] = {20: "twenty", 30: "thirty", 40: "forty"}
 
 
 def spelled(count: int) -> str:
-    """``27`` as ``"twenty seven"``. Hyphens are normalised away by `stated()`."""
+    """``27`` as ``"twenty seven"``. Hyphens are normalized away by `stated()`."""
     if count in NUMBER_WORDS:
         return NUMBER_WORDS[count]
     tens, units = divmod(count, 10)

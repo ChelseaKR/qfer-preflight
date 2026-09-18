@@ -54,7 +54,7 @@ So the promotion condition on QP018 and the reversal conditions in ADR 0005
 and ADR 0008 are not pending. They are declined at the source. The route each
 of them named is closed, and closed deliberately rather than by neglect.
 
-This matters to a reader more than it changes any behaviour. An unevaluated
+This matters to a reader more than it changes any behavior. An unevaluated
 rule whose promotion condition might be met next quarter and one whose
 publisher has said it never will be are not in the same state, and reporting
 them identically would be exactly the small dishonesty this project exists to
@@ -132,7 +132,7 @@ of the substitution holds, on better evidence than it had.
 ### The county file defect is confirmed
 
 ADR 0008 recorded that `AGG_CONSUMPTION_ELEC_COUNTY_TBL_ada.xlsx` puts county
-number 33 on two 2024 rows labelled IMPERIAL and SAN DIEGO, while numbering
+number 33 on two 2024 rows labeled IMPERIAL and SAN DIEGO, while numbering
 Imperial 13 and San Diego 37 everywhere else, and read those two rows as a
 defect in the Commission's file rather than a competing numbering. The
 observation was passed on. Staff confirmed it: "The current county consumption

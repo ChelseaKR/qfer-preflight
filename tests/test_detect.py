@@ -29,7 +29,7 @@ from qfer_preflight.cli import (
 
 # The header scan moved to `detect` so the published Python API and the
 # command line share one implementation. These tests follow it there; the
-# behaviour they assert is unchanged.
+# behavior they assert is unchanged.
 from qfer_preflight.detect import read_header_bytes as _read_header_bytes
 from qfer_preflight.profiles import (
     PROFILES,
@@ -117,7 +117,7 @@ def test_cli_detects_schedule_2_from_a_written_header(
     assert payload["profile"]["id"] == "CEC-1306A-S2"
 
 
-def test_cli_refuses_to_guess_on_a_header_it_does_not_recognise(
+def test_cli_refuses_to_guess_on_a_header_it_does_not_recognize(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = _write(tmp_path, "wrong.csv", b"CompanyNumber,Year\r\n123,2025\r\n")

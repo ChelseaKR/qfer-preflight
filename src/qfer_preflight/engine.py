@@ -282,7 +282,7 @@ class _FindingGroup:
     Grouping happens here, as the findings are gathered, rather than in the
     renderer. A file with a bad county in all 400,000 rows would otherwise
     build 400,000 objects each holding the same three hundred character
-    message before anything got the chance to summarise them.
+    message before anything got the chance to summarize them.
     """
 
     rule_id: str
@@ -750,7 +750,7 @@ class _Collector:
 #
 # Every fact collected here mirrors a definition that used to be written
 # against the whole text, and the mirroring is checked two ways in the test
-# suite: the adversarial corpus pins the observable behaviour end to end, and
+# suite: the adversarial corpus pins the observable behavior end to end, and
 # tests/test_streaming.py compares each scanner against its whole-text
 # reference across deliberately tiny chunk sizes.
 
@@ -1673,7 +1673,7 @@ def _check_codeset_columns(
             profile.customer_group_column,
             "QP015",
             profile.customer_group_values,
-            " Enter it spelled and capitalised exactly as published.",
+            " Enter it spelled and capitalized exactly as published.",
         ),
         (
             profile.udc_column,
@@ -1789,7 +1789,7 @@ def check_one_cell(profile: Profile, column: str, value: str) -> list[Finding]:
 
     Every finding the row raised is returned, including the ones the empty cells earned. The
     caller asked about one rule and filters to it; discarding the rest here would make this
-    function a judgement about which findings matter, which is not its job.
+    function a judgment about which findings matter, which is not its job.
 
     Only rules that read a cell can be reached this way. A structural rule reads the
     submission as an object and a cross-row rule reads a column across rows, so neither can be
@@ -2177,7 +2177,7 @@ def validate_bytes(
     This and `validate_path` are two entrances to one implementation. The
     bytes here already sit in memory by the caller's choice, so nothing is
     saved by pretending otherwise; the pass still runs through the same
-    bounded scanner so both entrances observe identical behaviour.
+    bounded scanner so both entrances observe identical behavior.
     """
     ingest = _scan_stream(io.BytesIO(data))
     return _validate_ingest(
@@ -2272,7 +2272,7 @@ def _refuse_contradictions(report: Report, registered: frozenset[str]) -> None:
     """Hold the report to what `model.Report` says a report is.
 
     Three ways a report can contradict itself, all of them resolved in the
-    reader's favour and therefore all of them worse than a crash:
+    reader's favor and therefore all of them worse than a crash:
 
     1. It cites a rule in a finding that it does not list as evaluated,
        claiming a check it also admits it did not run.

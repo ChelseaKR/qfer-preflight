@@ -1,4 +1,4 @@
-"""CLI behaviour, exit codes and report rendering."""
+"""CLI behavior, exit codes and report rendering."""
 
 from __future__ import annotations
 

@@ -121,7 +121,11 @@ def test_merged_findings_become_one_result_that_names_its_rows(
     header = ",".join(PROFILES["CEC-1306A-S1"].header)
     row = "123,2025,3,007,D,RESIDENTIAL_OTHER,925190,10,1000.50,25"
     target = tmp_path / "merged.csv"
-    target.write_text(f"{header}\r\n{row}\r\n{row}\r\n", encoding="utf-8")
+    # write_bytes, not write_text: a text handle opened with newline=None
+    # translates every "\n" to os.linesep, so on Windows this fixture became
+    # "\r\r\n"-terminated and the reader counted five lines where the test
+    # means three. The bytes are the input under test here.
+    target.write_bytes(f"{header}\r\n{row}\r\n{row}\r\n".encode())
 
     payload = _run(["check", str(target), "--format", "sarif"], capsys)
     run = payload["runs"][0]
@@ -143,7 +147,7 @@ def test_advisories_stay_unseverityed_and_uncited_in_sarif(
     header = ",".join(PROFILES["CEC-1306A-S1"].header)
     row = "123,2025,3,14,B,RESIDENTIAL_OTHER,925190,10,1000.50,25"
     target = tmp_path / "bom.csv"
-    target.write_text("\ufeff" + f"{header}\r\n{row}\r\n", encoding="utf-8")
+    target.write_bytes(("\ufeff" + f"{header}\r\n{row}\r\n").encode())
 
     payload = _run(["check", str(target), "--format", "sarif"], capsys)
     run = payload["runs"][0]
@@ -183,7 +187,7 @@ def test_an_input_that_was_never_validated_says_so_where_a_consumer_looks(
     This branch recorded the refusal in `run.properties.problem` alone, which is the
     same extension bag the single-report rendering was corrected for using. A machine
     reading this log saw an unsuccessful invocation, an empty `results` array, no
-    notification and no catalogued descriptor, and had nowhere in the standard to
+    notification and no cataloged descriptor, and had nowhere in the standard to
     learn that the filing was never validated or why: the run that checked nothing
     said less, where consumers look, than the run that checked almost everything.
 
@@ -207,11 +211,11 @@ def test_an_input_that_was_never_validated_says_so_where_a_consumer_looks(
     # The native reason survives into the notification, not only into properties.
     assert "could not read" in notification["message"]["text"]
 
-    # The descriptor it names is catalogued, and the index resolves to it.
-    catalogue = run["tool"]["driver"]["notifications"]
+    # The descriptor it names is cataloged, and the index resolves to it.
+    catalog = run["tool"]["driver"]["notifications"]
     position = notification["descriptor"]["index"]
-    assert catalogue[position]["id"] == notification["descriptor"]["id"]
-    assert catalogue[position]["defaultConfiguration"]["level"] == "error"
+    assert catalog[position]["id"] == notification["descriptor"]["id"]
+    assert catalog[position]["defaultConfiguration"]["level"] == "error"
 
     # And the sibling run, which did reach a verdict, still uses warning.
     validated = by_name[str(clean)]
@@ -378,7 +382,7 @@ def test_a_notification_descriptor_index_resolves_to_the_descriptor_it_names() -
             f"but the notification names {reference['id']!r}"
         )
 
-    # Catalogued once each, and only what was actually emitted. A descriptor
+    # Cataloged once each, and only what was actually emitted. A descriptor
     # for something that did not happen is a claim about the run.
     ids = [descriptor["id"] for descriptor in descriptors]
     assert len(ids) == len(set(ids))

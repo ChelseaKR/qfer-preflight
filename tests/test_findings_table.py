@@ -26,7 +26,7 @@ from qfer_preflight.engine import TOOL_NAME, FindingRow, validate_bytes
 from qfer_preflight.findings_table import (
     FINDINGS_TABLE_COLUMNS,
     TableHeader,
-    neutralise,
+    neutralize,
     render_findings_csv,
     render_findings_jsonl,
 )
@@ -109,7 +109,7 @@ def test_an_empty_filing_is_one_line_not_zero_and_the_issue_expected_zero() -> N
     be the exact reading this project refuses -- "nothing found" standing in for
     "nothing could be checked". The issue's criterion is met in the sense that
     matters (the exit code is unchanged and the table states its status), and is
-    wrong in its literal number, so this test pins the behaviour rather than the
+    wrong in its literal number, so this test pins the behavior rather than the
     sentence.
     """
     rows = _collect(b"")
@@ -168,8 +168,8 @@ def test_a_zero_line_table_still_states_the_status() -> None:
 
 
 @pytest.mark.parametrize("leader", ["=", "+", "-", "@"])
-def test_every_formula_leader_is_neutralised(leader: str) -> None:
-    assert neutralise(f"{leader}cmd|calc").startswith("'")
+def test_every_formula_leader_is_neutralized(leader: str) -> None:
+    assert neutralize(f"{leader}cmd|calc").startswith("'")
 
 
 @pytest.mark.parametrize("value", [" =cmd", "\t+1", "   @SUM(A1)"])
@@ -178,13 +178,20 @@ def test_leading_whitespace_does_not_hide_a_formula(value: str) -> None:
 
     A check that read index zero would pass `" =cmd"` straight through.
     """
-    assert neutralise(value).startswith("'")
+    assert neutralize(value).startswith("'")
 
 
 @pytest.mark.parametrize("value", ["2025", "CountyNumber", "", "A2", "error"])
 def test_an_ordinary_value_is_left_exactly_alone(value: str) -> None:
-    """The neutraliser must not corrupt the table it is protecting."""
-    assert neutralise(value) == value
+    """The neutralizer must not corrupt the table it is protecting."""
+    assert neutralize(value) == value
+
+
+def test_the_released_british_spelled_name_still_resolves() -> None:
+    """v0.2.0 shipped `neutralise`; the alias keeps that import working."""
+    from qfer_preflight import findings_table
+
+    assert findings_table.neutralise is neutralize
 
 
 def test_the_rendered_table_has_no_cell_a_spreadsheet_would_execute() -> None:
@@ -192,10 +199,10 @@ def test_the_rendered_table_has_no_cell_a_spreadsheet_would_execute() -> None:
 
     The rows here are hostile in every field on purpose. On the messages this tool
     emits today no field begins with a formula leader -- every message opens with a
-    column name or a word -- so this is defence in depth rather than a live
+    column name or a word -- so this is defense in depth rather than a live
     exploit. It is written over synthetic rows precisely because a fixture built
     from real findings would sit where the failure is impossible and would pass
-    whether the neutraliser worked or not.
+    whether the neutralizer worked or not.
     """
     hostile = [
         FindingRow(
@@ -234,7 +241,7 @@ def test_the_rendered_table_has_no_cell_a_spreadsheet_would_execute() -> None:
 
 
 def test_the_jsonl_table_keeps_values_exactly_as_the_scan_saw_them() -> None:
-    """JSONL is machine-read, so neutralising it would corrupt data for no gain."""
+    """JSONL is machine-read, so neutralizing it would corrupt data for no gain."""
     hostile = [
         FindingRow(row=2, column="c", rule_id="QP001", severity="error", cell="A2", message="-2+3")
     ]
@@ -287,10 +294,20 @@ def test_file_level_findings_sort_before_row_findings() -> None:
 
 
 def _cli(args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run the CLI and decode its output as UTF-8, not as the locale.
+
+    `text=True` alone decodes with the locale encoding, which on Windows is
+    the console code page. The table is UTF-8 by construction and
+    `--findings-bom` puts a U+FEFF at the front of it, so a locale decode
+    turns those three bytes into `ï»¿` and the assertion below fails on the
+    one platform the flag exists for. Naming the encoding makes the test read
+    what the tool writes.
+    """
     return subprocess.run(
         [sys.executable, "-m", "qfer_preflight", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
 
@@ -305,11 +322,22 @@ def test_the_cli_writes_the_table_and_keeps_the_exit_code() -> None:
 
 
 def test_the_byte_order_mark_is_off_unless_asked_for() -> None:
+    """And the run must not fall over emitting it.
+
+    On Windows `sys.stdout` encodes with the console code page, and cp1252
+    has no U+FEFF: before `_write_stdout`, this exact command raised
+    `UnicodeEncodeError` and printed nothing. Asserting the exit code as well
+    as the prefix is what tells a crash apart from a missing mark.
+    """
     clean = str(FIXTURES / "1306a_s1_clean.csv")
-    assert not _cli(["check", clean, "--format", "findings-csv"]).stdout.startswith("﻿")
-    assert _cli(["check", clean, "--format", "findings-csv", "--findings-bom"]).stdout.startswith(
-        "﻿"
+    without = _cli(["check", clean, "--format", "findings-csv"])
+    with_mark = _cli(["check", clean, "--format", "findings-csv", "--findings-bom"])
+    assert without.returncode == with_mark.returncode, (
+        "asking for a byte order mark changed the verdict; on Windows this was "
+        f"an encoding crash: {with_mark.stderr[-300:]}"
     )
+    assert not without.stdout.startswith("﻿")
+    assert with_mark.stdout.startswith("﻿"), with_mark.stderr[-300:]
 
 
 def test_a_batch_refuses_to_concatenate_tables_across_inputs() -> None:

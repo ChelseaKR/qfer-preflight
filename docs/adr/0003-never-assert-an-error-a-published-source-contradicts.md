@@ -51,7 +51,7 @@ Concretely:
    permits the value. The filer learns that the sources differ and can ask the
    Commission.
 3. The rule that would otherwise have fired keeps its own citation and its own
-   behaviour for every other value. QP014 still fails `X`. QP013 still fails
+   behavior for every other value. QP014 still fails `X`. QP013 still fails
    `77`, `-24` and `007`.
 
 This produced QP024, a warning that a County Number is zero padded, and QP025,

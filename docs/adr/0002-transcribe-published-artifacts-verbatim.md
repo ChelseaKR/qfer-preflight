@@ -12,7 +12,7 @@ spells its fourth column `RetailRatClass`, which reads as a typo for
 `RetailRateClass`. The instruction PDFs have their own small inconsistencies,
 including one footnote reading "letter" where its siblings read "letters".
 
-There is a standing temptation to normalise these.
+There is a standing temptation to normalize these.
 
 ## Decision
 
@@ -20,7 +20,7 @@ Transcribe published artifacts exactly, defects included.
 
 Header tuples in `profiles.py` match the published template bytes. Rule quotes
 in `rules.py` match the published wording, per document, with the sole
-normalisation that typographic quotation marks are written as ASCII. Where
+normalization that typographic quotation marks are written as ASCII. Where
 sibling documents word the same requirement differently, the quote is keyed by
 profile so each rule cites what its own document actually says.
 

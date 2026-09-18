@@ -35,7 +35,7 @@ that file executes both.
 **The reader repaired the bytes without saying so.** A UTF-8 byte order mark
 was stripped before the header comparison, so a file whose header the portal
 may well reject came back matching. Mixed and carriage-return line endings
-were normalised the same way.
+were normalized the same way.
 
 The first two are defects. The last two are the harder case: the tool noticed
 something real, and had nothing to do with it, because reporting a finding

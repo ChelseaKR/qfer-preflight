@@ -2,7 +2,7 @@
 
 This file records where the project could go next and, just as importantly,
 what would have to be true before it went there. It is aspirational, not a
-commitment, and it is subordinate to `CLAUDE.md`. Nothing below authorises
+commitment, and it is subordinate to `CLAUDE.md`. Nothing below authorizes
 inventing a specification, a field, a code set or a rule citation. An idea in
 this file becomes work only when the published record supports it.
 
@@ -156,7 +156,7 @@ detection keys are the published headers themselves, so this invents nothing.
 
 Definition of done: detection behind a flag or a default-off path, ambiguity
 fails closed, adversarial cases (header off by one character, header matching
-two profiles after normalisation attempts) assert refusal.
+two profiles after normalization attempts) assert refusal.
 
 ### 2.2 Batch mode
 
@@ -196,10 +196,10 @@ compatibility policy written next to it, changelog records the new field.
 and streams rows after decoding, so peak memory is roughly the file size. For a
 filing measured in hundreds of megabytes that is wasteful. Stream the read:
 hash incrementally (SHA-256 chains), decode in chunks, feed the CSV reader from
-the stream, keeping the existing behaviours that depend on seeing the whole
+the stream, keeping the existing behaviors that depend on seeing the whole
 byte picture (BOM detection, line-ending scan) intact.
 
-The risk is behavioural regression in exactly the paths the adversarial corpus
+The risk is behavioral regression in exactly the paths the adversarial corpus
 guards, so this lands only with the corpus extended to prove the advisory
 survivals from the 0.1.0 changelog still hold.
 
@@ -217,10 +217,10 @@ constant rather than the file size.
 
 Emit SARIF so the tool can drop into CI surfaces that speak it: findings as
 results with severity mapped, advisories as notifications preserving their
-no-severity nature, citations in the result message. Purely another serialiser;
+no-severity nature, citations in the result message. Purely another serializer;
 still offline, still standard library.
 
-Do this only after 2.3 stabilises the native JSON, and keep SARIF strictly
+Do this only after 2.3 stabilizes the native JSON, and keep SARIF strictly
 derived from it rather than becoming a second source of truth.
 
 ## Phase 3: Registry growth under the citation bar
@@ -263,7 +263,7 @@ documents already cited:
 - `CompanyNumber`: described as assigned by CEC staff; confirm whether any
   published text constrains its written form beyond presence (QP021).
 - The amount columns: whether any document states units, rounding or sign
-  conventions that a mechanical check could honour.
+  conventions that a mechanical check could honor.
 
 ## Phase 4: New form coverage
 
@@ -297,7 +297,7 @@ Standing triggers to watch, using the Phase 1.2 manifest ritual:
   because the portal is known to reject the value while nothing published
   says so.
 
-Intake checklist per new profile, each step leaving an artefact:
+Intake checklist per new profile, each step leaving an artifact:
 
 1. Transcribe the header byte for byte, irregularities included, with the
    template URL and retrieval date recorded (ADR 0002).
@@ -329,7 +329,7 @@ Intake checklist per new profile, each step leaving an artefact:
   experiment to locate tests that assert nothing, especially around merging
   and the advisory channel, where a vacuous test would hide the most.
 - Platform matrix. The package is pure Python, but encoding and line-ending
-  behaviour deserves evidence on Windows as well as macOS and Linux. Add one
+  behavior deserves evidence on Windows as well as macOS and Linux. Add one
   CI job running the suite end to end.
 - Python support. 3.12 and 3.13 declared today; add 3.14 when the toolchain
   (ruff, mypy, uv) supports it, and keep `requires-python` honest.
@@ -345,7 +345,7 @@ Intake checklist per new profile, each step leaving an artefact:
 - A filer guide: one short page per profile with a synthetic worked example
   built from the published template, what each exit code means, when `--strict`
   is the right setting, and what an unevaluated rule means for the filing
-  decision. Examples are labelled synthetic; none imply any real submission.
+  decision. Examples are labeled synthetic; none imply any real submission.
 - A glossary for terms the sources use: QFER, DSP, UDC, LSE, TEOR, UEG,
   NAICS, and the distinction between a rule, an advisory and an unevaluated
   rule.

@@ -100,13 +100,13 @@ breaking change and is recorded here.
   run's `status`. A zero-line table is not a clean bill, and the report remains the
   only output that says which rules were never evaluated.
 
-  Every CSV field is neutralised against spreadsheet formula injection, whitespace
+  Every CSV field is neutralized against spreadsheet formula injection, whitespace
   considered, because a spreadsheet strips leading whitespace before deciding
   whether it is looking at a formula. On the messages this tool emits today no field
-  begins with a formula leader, so this is defence in depth rather than a live
+  begins with a formula leader, so this is defense in depth rather than a live
   exploit; it is tested over synthetic hostile rows rather than real findings,
   because a fixture built from real findings would sit where the failure is
-  impossible and would pass whether the neutraliser worked or not. `--findings-bom`
+  impossible and would pass whether the neutralizer worked or not. `--findings-bom`
   adds the byte order mark Excel needs. A batch writes one table per input through
   `--findings-dir` and refuses to concatenate them, because a concatenated table
   cannot be sorted without interleaving two filings whose row numbers mean different
@@ -201,7 +201,7 @@ breaking change and is recorded here.
   The header scan and profile detection moved out of `cli.py` into
   `detect.py`, and the unbound rule listing into `rules.all_rules`, so the
   command line and the API run one implementation instead of two that agree
-  today. No CLI behaviour or output changes.
+  today. No CLI behavior or output changes.
 
 - `qfer-preflight explain <RULE_OR_ADV_CODE>`, with `--profile`, `--value` and
   `--format json`. A finding names the rule and the offending value; until now the
@@ -287,7 +287,7 @@ breaking change and is recorded here.
   cell reference in a finding; and a worked failing run showing all three
   severities, including why the zero padded County Number is a warning the
   project knows to be more lenient than the portal.
-- `tests/test_filer_guide.py`, which stops the guide from claiming behaviour
+- `tests/test_filer_guide.py`, which stops the guide from claiming behavior
   the tool does not have. Every CSV block is extracted, matched against the
   transcribed template headers, written to disk and run through the same
   entry point a filer's run uses. The status, the number of rules evaluated,
@@ -349,11 +349,28 @@ breaking change and is recorded here.
 
 ### Fixed
 
+- **`SECURITY.md` promised the tool writes no file, and it writes one.** The
+  no-retention property read *"Report output goes to stdout and nowhere else."*
+  That was true when it was written and stopped being true when `--findings-dir`
+  shipped: a batch findings run writes one table per input into that directory,
+  and a findings table quotes cell values out of the filing. Measured on the
+  committed fixtures -- two inputs, two files, 3,226 bytes of quoted `Year`,
+  `Month` and `CountyNumber` values. Nothing failed, because nothing read the
+  sentence. A filer reading `SECURITY.md` to decide whether this tool may touch
+  a document eligible for confidential treatment was told no such file could
+  exist. The bullet now states the property that is true -- the tool writes
+  nothing to a path the caller did not name, and `--findings-dir` is the only
+  way to name one -- and `tests/test_security_claims.py` holds it from both
+  sides: every output format run with no destination writes nothing into either
+  a scratch working directory or a scratch `TMPDIR`, and every filesystem write
+  in the package is enumerated, so a write added anywhere else fails and asks
+  whether the bullet is still true.
+
 - **The batch SARIF rendering recorded a refusal only where no consumer reads it.**
   An input the tool could not process gets a run of its own, and that run carried its
   reason in `run.properties.problem` alone. A machine reading the log saw an
   unsuccessful invocation, an empty `results` array, no `toolExecutionNotifications`
-  and no catalogued notification descriptor, with nothing in the standard saying the
+  and no cataloged notification descriptor, with nothing in the standard saying the
   filing was never validated or why. That is the same extension bag, and the same
   mistake, the single-report rendering was corrected for: the fix that gave every
   unevaluated rule a notification never reached `batch_to_sarif`, so **the run that
@@ -362,7 +379,7 @@ breaking change and is recorded here.
   `empty.csv`: the validated run carried five notifications against zero results, and
   the never-validated run carried none.
   Such a run now carries one `toolExecutionNotification` at level `error`, naming the
-  input and repeating the native reason, with its descriptor catalogued in
+  input and repeating the native reason, with its descriptor cataloged in
   `tool.driver.notifications`. `error` rather than the `warning` an unevaluated rule
   carries, because a run that reached a verdict without checking everything is not the
   same condition as an input for which no analysis ran at all.
@@ -371,17 +388,17 @@ breaking change and is recorded here.
 
 - Commits reached `main` with no CI verdict at all. `ci.yml` and
   `security.yml` keyed their concurrency group on `github.ref`, which puts
-  every push to `main` into one group, and cancelled in progress runs
+  every push to `main` into one group, and canceled in progress runs
   unconditionally, so each merge discarded the run belonging to the commit
   before it. Measured on 2026-09-06 over the whole run history: `62ce09d`
-  carries no check runs at all, `ac467a1` carries only cancelled ones, and
-  `ee7b346` carries four cancelled out of five, all three from pull requests
+  carries no check runs at all, `ac467a1` carries only canceled ones, and
+  `ee7b346` carries four canceled out of five, all three from pull requests
   merged thirteen seconds apart. A gate whose result was thrown away is not
   distinguishable afterwards from a gate that never ran. Turning cancellation
   off would not have repaired it, because a concurrency group holds at most one
   pending run and a third arrival evicts the second as silently. The group now
   varies with the commit on a push, so no two `main` runs ever contend, while a
-  pull request keeps its ref and keeps cancelling superseded runs, which is
+  pull request keeps its ref and keeps canceling superseded runs, which is
   what that setting was added for. `tests/test_gate_parity.py` holds both
   workflows to it.
 
@@ -481,7 +498,7 @@ breaking change and is recorded here.
   reader would look. That is the false clean ADR 0001 exists to prevent,
   reintroduced by a derived surface. Every unevaluated rule now emits a
   warning-level `invocation.toolExecutionNotifications` entry carrying its
-  reason, catalogued in `tool.driver.notifications`, and a report that is not
+  reason, cataloged in `tool.driver.notifications`, and a report that is not
   `pass` emits one more carrying the same verdict sentence the text rendering
   prints. `executionSuccessful` stays true: the invocation did complete and
   did reach a verdict, and what it could not check is what the notifications
@@ -550,7 +567,7 @@ breaking change and is recorded here.
   unambiguous match against the published templates, typos included. No
   match, several matches, an unreadable file and an empty file are all usage
   errors that say so, never guesses. Naming `--profile` explicitly keeps the
-  old behaviour, including validating a file whose header is wrong.
+  old behavior, including validating a file whose header is wrong.
 - `docs/schemas/report-v1.schema.json`, a published JSON Schema for the
   `--format json` report, with the compatibility policy written into it:
   additive fields are minor, removals and type changes are breaking. Reports
@@ -737,7 +754,7 @@ endorsed by, or approved by the California Energy Commission.
   invisible characters and their code points, give the published legend for a
   code set, suggest the corrected numeric value, and distinguish a value that
   is out of range from one that is not a number at all.
-- Tests for the release workflow's fail-closed behaviour. The guard that stops
+- Tests for the release workflow's fail-closed behavior. The guard that stops
   the job when `.github/allowed_signers` names no principal is lifted out of
   the workflow file and run in a real shell, against a missing file, an empty
   file and a comment-only file, and all three stop the job. The signer list is

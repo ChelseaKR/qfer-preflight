@@ -3,7 +3,7 @@
 Every rule in this file is derived from text published by the California
 Energy Commission, and carries a citation to the document it came from. The
 `quote` attached to a rule is transcribed from that document. The only
-normalisation applied to a quote is that typographic quotation marks are
+normalization applied to a quote is that typographic quotation marks are
 written as plain ASCII quotation marks. Wording, spelling and punctuation are
 otherwise left exactly as published, including in the few places where the
 published text contains an evident typo.
@@ -368,7 +368,7 @@ RULE_SPECS: tuple[RuleSpec, ...] = (
     ),
     RuleSpec(
         id="QP015",
-        title="Customer Group must match a published value, spelled and capitalised exactly",
+        title="Customer Group must match a published value, spelled and capitalized exactly",
         severity=Severity.ERROR,
         locator='field definition "Customer Group"',
         quote=(

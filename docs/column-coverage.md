@@ -214,4 +214,4 @@ reason and the promotion condition.
 
 `--strict-ledger` turns the ledger into a gate: it exits non-zero when any rule
 judged no rows on a column the form carries. A clean filing can fail it, and
-that is the intended behaviour rather than a bug in the flag.
+that is the intended behavior rather than a bug in the flag.

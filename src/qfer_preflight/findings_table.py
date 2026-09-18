@@ -21,14 +21,14 @@ a partial answer rendered as a complete one. So the ungrouped rows come from
 `engine.FindingSink`, which is called once per occurrence as the single pass reaches it,
 and this module never sees a `Finding` at all.
 
-## Why every cell is neutralised
+## Why every cell is neutralized
 
 The tool already raises an advisory about formula-looking cells in a *filing*, because a
 value beginning `=`, `+`, `-` or `@` is executed by Excel and Google Sheets when the file
 is opened. That hazard does not stop applying because it is our file: a filer opens this
 table in the same spreadsheet, and the messages in it quote the filing's own cell values.
 
-So every field is neutralised on the way out, by prefixing an apostrophe -- the form both
+So every field is neutralized on the way out, by prefixing an apostrophe -- the form both
 Excel and Sheets read as "this is text". `-` is included, which costs a leading
 apostrophe on negative numbers, and that is the right trade: a table of findings is read,
 not summed, and the alternative is shipping the injection this tool warns filers about.
@@ -39,6 +39,21 @@ not summed, and the alternative is shipping the injection this tool warns filers
 and an empty table is the same sentence in a different format. The header block therefore
 carries the run's **status** alongside the counts, so a table with zero lines for a filing
 that was never validated says so on its first line rather than looking like a clean bill.
+
+## Why writing the file lives here
+
+Both renderers pin their line terminator: the CSV writer is constructed with
+`lineterminator="\\n"`, and the JSONL renderer joins on `"\\n"`. That decision was
+undone one layer up. `Path.write_text(text, encoding="utf-8")` opens the handle with
+`newline=None`, which is text mode with translation on, so every `\\n` becomes
+`os.linesep` -- `\\r\\n` on Windows. The same command over the same filing therefore
+produced different bytes depending on which machine ran it, while the module that
+chose the terminator said otherwise.
+
+`write_table` is the one place a rendered table reaches a file, and it passes
+`newline=""` so the bytes on disk are the bytes the renderer produced. It is here
+rather than in the command line because the line-terminator decision is here; a
+caller should not have to know that the renderer's choice needs defending.
 """
 
 from __future__ import annotations
@@ -48,15 +63,17 @@ import io
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from qfer_preflight.engine import FindingRow
 
 __all__ = [
     "FINDINGS_TABLE_COLUMNS",
     "TableHeader",
-    "neutralise",
+    "neutralize",
     "render_findings_csv",
     "render_findings_jsonl",
+    "write_table",
 ]
 
 #: The column order, fixed. A spreadsheet formula written against this table names
@@ -78,7 +95,7 @@ _FORMULA_LEADERS = ("=", "+", "-", "@")
 _TEXT_MARKER = "'"
 
 
-def neutralise(value: str) -> str:
+def neutralize(value: str) -> str:
     """Return `value` in a form no spreadsheet will execute.
 
     Leading whitespace is considered, because a spreadsheet strips it before deciding
@@ -88,6 +105,10 @@ def neutralise(value: str) -> str:
     if value.lstrip().startswith(_FORMULA_LEADERS):
         return _TEXT_MARKER + value
     return value
+
+
+# Deprecated alias for the name released in v0.2.0; use `neutralize`.
+neutralise = neutralize
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +158,7 @@ def render_findings_csv(
     *,
     byte_order_mark: bool = False,
 ) -> str:
-    """The table as CSV, every field neutralised, sorted by row then rule.
+    """The table as CSV, every field neutralized, sorted by row then rule.
 
     `byte_order_mark` is off by default and exists for Excel, which reads a UTF-8
     file without one as the local code page and mangles anything non-ASCII.
@@ -148,7 +169,7 @@ def render_findings_csv(
         buffer.write(f"{line}\n")
     writer.writerow(FINDINGS_TABLE_COLUMNS)
     for entry in _sorted(rows):
-        writer.writerow([neutralise(_cell(v)) for v in _fields(entry)])
+        writer.writerow([neutralize(_cell(v)) for v in _fields(entry)])
     text = buffer.getvalue()
     return "﻿" + text if byte_order_mark else text
 
@@ -186,6 +207,19 @@ def render_findings_jsonl(header: TableHeader, rows: Sequence[FindingRow]) -> st
         for entry in _sorted(rows)
     )
     return "\n".join(lines) + "\n"
+
+
+def write_table(path: Path, text: str) -> None:
+    """Write a rendered table to `path` exactly as it was rendered.
+
+    `newline=""` is the whole content of this function and it is not cosmetic.
+    Without it the handle translates every `\\n` to `os.linesep`, so a table
+    written on Windows carries `\\r\\n` while the renderer that produced it
+    pinned `\\n`, and `--findings-bom` -- a flag whose entire purpose is control
+    over the bytes Excel receives -- sits on top of output whose line endings
+    the tool had stopped choosing.
+    """
+    path.write_text(text, encoding="utf-8", newline="")
 
 
 def _fields(entry: FindingRow) -> tuple[object, ...]:
