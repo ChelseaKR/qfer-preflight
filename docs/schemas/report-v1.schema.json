@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "qfer-preflight validation report, schema version 1",
   "description": "The document produced by `qfer-preflight check --format json`. Schema version 1 is the first published shape. Compatibility policy: adding an optional field or a new enum value is a minor change and bumps the minor version; removing a field, renaming a field, changing a type, or tightening a constraint that existing reports satisfy is breaking and bumps the major version. The `schema_version` integer in the report names the major version it conforms to.",
-  "minorVersion": 1,
+  "minorVersion": 2,
   "minorVersionHistory": [
     "1.0: the first published shape.",
-    "1.1: adds the optional `evaluation` ledger, one entry per rule and column, saying how many rows each rule judged on this file. Optional rather than required, because a report written by an earlier version has no such field and requiring it would retroactively invalidate documents this schema already described."
+    "1.1: adds the optional `evaluation` ledger, one entry per rule and column, saying how many rows each rule judged on this file. Optional rather than required, because a report written by an earlier version has no such field and requiring it would retroactively invalidate documents this schema already described.",
+    "1.2: adds the optional `code_lists` object, present only on a run given `--naics-list`. It records that QP018 was evaluated against a NAICS code list the caller supplied rather than a published one, with that file's path, SHA-256, distinct code count and line count. Absent rather than null on every other run, so a report produced without the flag is byte for byte the report this tool has always written. The codes themselves are never in it: the Commission declined to publish that list, and a report is a document a filer forwards."
   ],
   "type": "object",
   "additionalProperties": false,
@@ -115,6 +116,14 @@
       "type": "array",
       "description": "What each rule read on this file, one entry per rule and per column it touches. A measurement of the run: it carries no severity, cites no document and moves no verdict. Added at minor version 1.1 and therefore optional: a report produced before it exists is still a valid version 1 report.",
       "items": { "$ref": "#/$defs/ledgerEntry" }
+    },
+    "code_lists": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Code sets this tool did not publish, handed in by the caller for one run. Present only when such a list was supplied AND accepted. A run given a list that was refused carries no entry here and states the refusal as the rule's not-evaluated reason instead, so \"no list was supplied\" and \"a list was supplied and refused\" never read the same. Added at minor version 1.2.",
+      "properties": {
+        "naics": { "$ref": "#/$defs/suppliedNaicsList" }
+      }
     }
   },
   "$defs": {
@@ -226,6 +235,36 @@
         "row": { "type": "integer", "minimum": 1 },
         "column": { "type": "string", "minLength": 1 },
         "occurrences": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "suppliedNaicsList": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The NAICS code list QP018 was evaluated against on this run. The Commission does not publish its \"Valid NAICS codes\" list and this tool ships none; this one came from the person who ran the tool, and every QP018 finding in the report rests on that file and on nothing else.",
+      "required": ["rule", "provenance", "path", "sha256", "codes", "lines", "note"],
+      "properties": {
+        "rule": { "const": "QP018" },
+        "provenance": {
+          "const": "caller_supplied",
+          "description": "The only value this field takes. A published code set would not need one, and none of the tables in codes.py appears here."
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The path exactly as the caller wrote it, never resolved to an absolute path: a report is forwarded, and a directory layout is not part of a filing."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the file's bytes as read, before any decoding. This is what identifies the list when two reports disagree."
+        },
+        "codes": { "type": "integer", "minimum": 1, "description": "Distinct codes on the list." },
+        "lines": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Lines read, which exceeds `codes` when the file repeats one."
+        },
+        "note": { "type": "string", "minLength": 1 }
       }
     }
   }

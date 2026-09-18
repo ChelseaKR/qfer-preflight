@@ -13,6 +13,44 @@ breaking change and is recorded here.
 
 ### Added
 
+- **`check --naics-list PATH`, so QP018 can reach a verdict for a filer who holds
+  the list it needs.** The Commission's "Valid NAICS codes" list is published at no
+  URL this project can retrieve and staff have said it will not be, so QP018 has
+  been registered, unevaluated, and reported on every run. It lives in the data
+  dictionary on the portal app landing pages. A filer who has that document can now
+  hand the codes to this tool instead of forking it.
+
+  **This project still ships no list and fetches none.** The file is read from the
+  caller's disk, once, and no copy of it is written into any report: the Commission
+  declined to publish that list, and a report is a document a filer forwards, so a
+  hint names a transform of the filing's own value or counts how many codes share a
+  prefix, and stops there.
+
+  **The report says what the rule rested on.** Its header block states that QP018
+  was evaluated against a caller-supplied list rather than a published one and names
+  the file's path as given, its SHA-256, its distinct code count and its line count;
+  `--format json` carries the same under `code_lists` (schema minor version 1.2, an
+  optional field, `report-v1.schema.json` unchanged in its major version). Every
+  QP018 finding repeats the path and the digest, because a reader of the report is
+  not necessarily the person who ran it.
+
+  **Three states, not two.** No list, a list that was refused, and a list that was
+  read. The first two both leave QP018 unevaluated and they carry different reasons,
+  so a filer who mistyped a path is told about their typo rather than about the
+  Commission's publication practice. Reading fails closed on an unreadable file, a
+  byte order mark, non-UTF-8 bytes, an empty file, and any line that is not exactly
+  six characters once its line ending is stripped. Nothing is trimmed or corrected:
+  one trailing space turns a valid code into one that matches nothing, and the QP018
+  error that followed would name a correct filing as wrong.
+
+  **Without the flag nothing moved.** The report is byte for byte what this tool has
+  always written, in both renderings, and a test compares them as bytes.
+  `qfer-preflight rules` still prints QP018 as not implemented, because the registry
+  describes what this project ships. ADR 0011 records why this is consistent with
+  ADR 0009's refusal to ground a finding in material a reader cannot open, and where
+  the mechanism stops: QP005, QP032 and QP034 are unevaluated for reasons no file a
+  caller could supply would settle.
+
 - A source watcher, so the manifest's procedure stops depending on somebody
   remembering it. `scripts/watch_sources.py` re-fetches every document in
   `docs/source-manifest.md`, compares digests, and names the rules whose citations
